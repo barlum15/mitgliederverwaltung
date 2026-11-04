@@ -34,7 +34,7 @@ Jede Änderung wird **sofort automatisch** in die Datenbankdatei geschrieben. Ob
 | **Liste** | Alle *aktiven* Mitglieder, nummeriert, alphabetisch nach Familienname. Oben die Anzahl aktiver Mitglieder. |
 | **Neues Mitglied** | Stammdaten erfassen (Anrede, Titel, Name, Geburtsdatum, Adresse, Mitglied seit, Anmerkung). |
 | **Bearbeiten** | Stift-Symbol oder Doppelklick auf eine Zeile. Hier auch **Austritt** (Austrittsdatum, Grund „Austritt“ oder „Verstorben“ mit Sterbedatum). |
-| **Mitgliedsbeitrag** | Häkchen für Vorjahr, aktuelles und nächstes Jahr. Abwählen muss bestätigt werden. Alle Jahre bleiben gespeichert. |
+| **Mitgliedsbeitrag** | Häkchen für nächstes Jahr, aktuelles Jahr und Vorjahr (in dieser Reihenfolge). Abwählen muss bestätigt werden. Alle Jahre bleiben gespeichert. |
 | **Löschen** | Mülleimer-Symbol – entfernt ein Mitglied *endgültig* (für Fehleingaben). Für Austritte bitte stattdessen den Austrittsgrund eintragen. |
 | **Ehemalige** | Ausgetretene und verstorbene Mitglieder; Bearbeiten, wieder aufnehmen, löschen, Excel-Export. |
 | **Verstorbene** | Liste mit Anrede, Vorname, Familienname, Geburtsdatum, Sterbedatum; Excel-Export. |

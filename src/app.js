@@ -40,7 +40,8 @@
   function todayISO() { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
   function nowStamp() { const d = new Date(); return `${todayISO()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
   function currentYear() { return new Date().getFullYear(); }
-  function feeYears() { const y = currentYear(); return [y - 1, y, y + 1]; }
+  // Reihenfolge der Beitragsspalten: nächstes Jahr, aktuelles Jahr, Vorjahr (Index 1 = aktuelles Jahr)
+  function feeYears() { const y = currentYear(); return [y + 1, y, y - 1]; }
   function isValidISO(iso) {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
     if (!m) return false;

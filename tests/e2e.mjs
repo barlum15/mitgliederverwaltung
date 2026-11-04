@@ -104,7 +104,7 @@ const coll = new Intl.Collator('de-AT', { sensitivity: 'base' });
 for (let i = 1; i < rows.length; i++) assert.ok(coll.compare(rows[i - 1][3], rows[i][3]) <= 0, `Sortierung: ${rows[i - 1][3]} vor ${rows[i][3]}`);
 assert.ok(rows.findIndex((r) => r[3] === 'Öhlinger') > rows.findIndex((r) => r[3] === 'Moser'), 'Ö wird wie O einsortiert');
 const headers = await page.$$eval('#members-table thead th', (ths) => ths.map((t) => t.textContent.trim()));
-assert.deepEqual(headers.slice(12, 15), [String(Y - 1), String(Y), String(Y + 1)]);
+assert.deepEqual(headers.slice(12, 15), [String(Y + 1), String(Y), String(Y - 1)]);
 ok('Liste ist nummeriert, alphabetisch nach Familienname (Umlaute korrekt), Beitragsjahre ' + headers.slice(12, 15).join('/'));
 await page.screenshot({ path: join(outDir, '02_liste.png') });
 
@@ -285,7 +285,7 @@ assert cell.fill.fgColor.rgb == 'FFFCD34D'
 ml = openpyxl.load_workbook(d + '/Mitgliederliste.xlsx')['Mitglieder']
 hdr = [c.value for c in ml[4]]
 assert hdr[:6] == ['Nr.','Anrede','Titel vorangestellt','Familienname','Vorname','Titel nachgestellt'], hdr
-assert hdr[-3:] == ['Beitrag %d' % (Y-1), 'Beitrag %d' % Y, 'Beitrag %d' % (Y+1)], hdr
+assert hdr[-3:] == ['Beitrag %d' % (Y+1), 'Beitrag %d' % Y, 'Beitrag %d' % (Y-1)], hdr
 nrs = [r[0] for r in ml.iter_rows(min_row=5, values_only=True)]
 assert nrs == list(range(1, len(nrs)+1))
 v = openpyxl.load_workbook(d + '/Verstorbene.xlsx')['Verstorbene']
