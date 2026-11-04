@@ -56,7 +56,8 @@ const fsMock = () => {
   };
 };
 
-const browser = await chromium.launch();
+// Scrollbalken einblenden (Playwright blendet sie sonst aus), damit der Zoom-Test sie messen kann
+const browser = await chromium.launch({ ignoreDefaultArgs: ['--hide-scrollbars'] });
 const page = await browser.newPage({ viewport: { width: 1600, height: 950 }, locale: 'de-AT' });
 const external = [];
 const errors = [];
@@ -246,6 +247,25 @@ await page.fill('#search', 'ohlinger');
 await page.waitForFunction(() => { const r = [...document.querySelectorAll('#members-body tr')]; return r.length >= 1 && r.length < 10 && r.every((tr) => tr.textContent.includes('Öhlinger')); });
 ok('Suche findet „Öhlinger“ auch ohne Umlaut');
 await page.fill('#search', '');
+await page.waitForFunction(() => document.querySelectorAll('#members-body tr').length > 10);
+
+// Zoom (Strg + Mausrad): Browser-Zoom verkleinert den nutzbaren Bereich in CSS-Pixeln.
+// Der untere Rand der Tabelle (mit waagrechtem Scrollbalken) muss immer im Fenster bleiben.
+for (const zoom of [1, 1.5, 2, 3]) {
+  await page.setViewportSize({ width: Math.round(1600 / zoom), height: Math.round(950 / zoom) });
+  const g = await page.evaluate(() => {
+    const w = document.querySelector('.table-card > .table-wrap');
+    const r = w.getBoundingClientRect();
+    return { bottom: r.bottom, inner: window.innerHeight, pageScroll: document.documentElement.scrollHeight > window.innerHeight,
+      overflowX: w.scrollWidth > w.clientWidth, barHeight: w.offsetHeight - w.clientHeight };
+  });
+  if (zoom === 2) await page.screenshot({ path: join(outDir, '10_zoom_200.png') });
+  assert.ok(g.bottom <= g.inner + 0.5 || !g.pageScroll, `Zoom ${zoom * 100} %: Tabelle endet bei ${g.bottom}px, Fenster ist ${g.inner}px hoch`);
+  assert.ok(g.bottom <= g.inner + 0.5 || zoom >= 3, `Zoom ${zoom * 100} %: Scrollbalken außerhalb des Fensters`);
+  if (zoom > 1) assert.ok(g.overflowX && g.barHeight > 0, `Zoom ${zoom * 100} %: waagrechter Scrollbalken fehlt`);
+}
+await page.setViewportSize({ width: 1600, height: 950 });
+ok('Bei 100 %, 150 % und 200 % Zoom bleibt der waagrechte Scrollbalken der Tabelle im Fenster sichtbar');
 
 // Neue, leere Datenbank anlegen
 await page.click('[data-action="wechseln"]');

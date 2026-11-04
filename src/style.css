@@ -117,8 +117,11 @@ body {
 .privacy .ico { color: var(--success); margin-top: 1px; }
 
 /* ===== Kopfzeile ===== */
+/* Hauptansicht füllt genau das Fenster; die Tabelle nimmt den restlichen Platz ein,
+   damit ihr waagrechter Scrollbalken auch beim Hineinzoomen sichtbar bleibt. */
+#app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 .topbar {
-  position: sticky; top: 0; z-index: 20;
+  position: relative; z-index: 20; flex: none;
   display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
   padding: 12px 24px;
   background: linear-gradient(110deg, #164e63 0%, #0e7490 45%, #5b21b6 120%);
@@ -143,7 +146,11 @@ body {
 .banner-danger { background: var(--danger); color: #fff; }
 
 /* ===== Inhalt ===== */
-.content { padding: 20px 24px 40px; max-width: 1900px; margin: 0 auto; }
+.content {
+  padding: 20px 24px 16px; max-width: 1900px; width: 100%; margin: 0 auto;
+  flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto;
+}
+#save-error { flex: none; }
 .toolbar { display: flex; gap: 14px; align-items: stretch; flex-wrap: wrap; margin-bottom: 16px; }
 .stat {
   background: linear-gradient(135deg, #0891b2, #0e7490 60%, #155e75); color: #fff;
@@ -166,8 +173,18 @@ body {
 .search input { border: 0; outline: 0; font: inherit; width: 100%; background: transparent; color: var(--text); }
 
 .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); }
-.table-card { overflow: hidden; }
-.table-wrap { overflow: auto; max-height: calc(100vh - 230px); }
+.toolbar { flex: none; }
+.table-card { overflow: hidden; flex: 1; min-height: 220px; display: flex; flex-direction: column; }
+.table-wrap { overflow: auto; }
+.table-card > .table-wrap { flex: 1; min-height: 0; }
+
+/* Gut sichtbare, immer eingeblendete Scrollbalken (bewusst ohne scrollbar-color,
+   weil Chrome sonst die folgenden Regeln ignoriert) */
+.table-wrap::-webkit-scrollbar { width: 14px; height: 14px; }
+.table-wrap::-webkit-scrollbar-track { background: #e2e8f0; }
+.table-wrap::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 8px; border: 3px solid #e2e8f0; }
+.table-wrap::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+.table-wrap::-webkit-scrollbar-corner { background: #e2e8f0; }
 .table-wrap-dialog { max-height: 58vh; border: 1px solid var(--line); border-radius: 12px; }
 
 /* ===== Tabellen ===== */
@@ -294,6 +311,28 @@ tr.bday-half .badge-age { background: #f59e0b; color: #fff; }
 }
 .toast-ok .ico { color: #34d399; }
 .toast-err { background: var(--danger); }
+
+/* ===== Wenig Platz (z. B. beim Hineinzoomen mit Strg + Mausrad) =====
+   Kopfzeile und Kennzahlen werden kompakter, damit die Tabelle samt Scrollbalken sichtbar bleibt. */
+@media (max-width: 1250px) {
+  .topnav .lbl { display: none; }
+  .topnav .btn { padding: 8px 10px; }
+}
+@media (max-height: 760px) {
+  .topbar { padding-top: 8px; padding-bottom: 8px; }
+  .topbar .logo { width: 36px; height: 36px; }
+  .topbar .logo .ico { width: 22px; height: 22px; }
+  .content { padding-top: 12px; padding-bottom: 10px; }
+  .toolbar { gap: 10px; margin-bottom: 10px; }
+  .stat { padding: 6px 14px; min-width: 0; }
+  .stat-label { font-size: 11px; }
+  .stat-value { font-size: 24px; }
+  .stat-value-sm { font-size: 14px; padding-top: 4px; }
+  .stat-of { font-size: 14px; }
+  .search { height: 38px; }
+  .toolbar-right .btn-lg { padding: 8px 14px; font-size: 14px; }
+  .table-card { min-height: 160px; }
+}
 
 /* ===== Schmale Bildschirme ===== */
 @media (max-width: 760px) {
