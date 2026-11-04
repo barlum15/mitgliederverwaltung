@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="de-AT">
+<head>
+<meta charset="utf-8">
+<!--
+  DATENSCHUTZ: Diese Content-Security-Policy verbietet dem Browser jede Netzwerkverbindung
+  aus dieser Seite (connect-src 'none', default-src 'none'). Es werden keine Skripte,
+  Schriften, Bilder oder sonstige Dateien aus dem Internet geladen und keine Daten gesendet.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mitgliederverwaltung</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230e7490'/%3E%3Ccircle cx='24' cy='24' r='8' fill='white'/%3E%3Ccircle cx='42' cy='26' r='6' fill='%23fcd34d'/%3E%3Cpath d='M10 50c2-9 8-14 14-14s12 5 14 14z' fill='white'/%3E%3Cpath d='M32 50c1-7 5-11 10-11s9 4 11 11z' fill='%23fcd34d'/%3E%3C/svg%3E">
+<!--STYLE-->
+</head>
+<body>
+
+<!-- ============ Startbildschirm ============ -->
+<section id="start" class="start" hidden>
+  <div class="start-card">
+    <div class="brand brand-lg">
+      <div class="logo" aria-hidden="true"><!--ICON:people--></div>
+      <div>
+        <h1>Mitgliederverwaltung</h1>
+        <p class="muted">Alle Daten bleiben ausschließlich auf diesem Computer.</p>
+      </div>
+    </div>
+
+    <div id="start-unsupported" class="alert alert-danger" hidden>
+      <strong>Dieser Browser wird nicht unterstützt.</strong><br>
+      Bitte öffnen Sie die Datei <em>Mitgliederverwaltung.html</em> mit <strong>Google Chrome</strong>.
+      Nur dort kann das Programm die Datenbankdatei direkt auf Ihrem Computer speichern.
+    </div>
+
+    <div id="start-actions">
+      <div id="start-recent" class="recent" hidden>
+        <div>
+          <div class="muted small">Zuletzt verwendet</div>
+          <div class="recent-name"><!--ICON:db--> <span id="recent-name"></span></div>
+        </div>
+        <button id="btn-open-recent" class="btn btn-primary btn-lg">Öffnen</button>
+      </div>
+      <div class="start-buttons">
+        <button id="btn-open" class="btn btn-tile">
+          <span class="tile-icon"><!--ICON:folder--></span>
+          <span><strong>Datenbank öffnen</strong><br><span class="muted small">Vorhandene Datei (.db) auswählen</span></span>
+        </button>
+        <button id="btn-new-db" class="btn btn-tile">
+          <span class="tile-icon"><!--ICON:plus--></span>
+          <span><strong>Neue Datenbank anlegen</strong><br><span class="muted small">Speicherort selbst wählen</span></span>
+        </button>
+      </div>
+    </div>
+
+    <div class="privacy">
+      <!--ICON:shield-->
+      <span>Offline-Programm: Es werden keine Daten ins Internet gesendet. Der Browser ist so eingestellt,
+      dass diese Seite technisch keine Netzwerkverbindung aufbauen darf.</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Hauptansicht ============ -->
+<div id="app" hidden>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"><!--ICON:people--></div>
+      <div>
+        <div class="brand-title">Mitgliederverwaltung</div>
+        <div class="brand-sub">
+          <span class="chip" title="Geöffnete Datenbankdatei"><!--ICON:db--> <span id="db-name"></span></span>
+          <span id="save-status" class="chip chip-ok"><!--ICON:check--> <span>Gespeichert</span></span>
+        </div>
+      </div>
+    </div>
+    <nav class="topnav">
+      <button class="btn btn-ghost" data-action="ehemalige"><!--ICON:archive--> Ehemalige</button>
+      <button class="btn btn-ghost" data-action="verstorbene"><!--ICON:candle--> Verstorbene</button>
+      <button class="btn btn-ghost" data-action="geburtstage"><!--ICON:cake--> Geburtstage</button>
+      <button class="btn btn-ghost" data-action="export"><!--ICON:excel--> Excel-Export</button>
+      <button class="btn btn-ghost" data-action="sicherung"><!--ICON:save--> Sicherheitskopie</button>
+      <button class="btn btn-ghost" data-action="wechseln" title="Andere Datenbank öffnen"><!--ICON:switch--></button>
+    </nav>
+  </header>
+
+  <div id="save-error" class="banner banner-danger" hidden>
+    <strong>Achtung: Die letzte Änderung konnte nicht gespeichert werden!</strong>
+    <span id="save-error-text"></span>
+    <button class="btn btn-light btn-sm" id="btn-retry-save">Erneut speichern</button>
+  </div>
+
+  <main class="content">
+    <section class="toolbar">
+      <div class="stat">
+        <div class="stat-label">Aktive Mitglieder</div>
+        <div class="stat-value" id="count-active">0</div>
+      </div>
+      <div class="stat stat-soft">
+        <div class="stat-label">Beitrag <span id="year-current"></span> bezahlt</div>
+        <div class="stat-value"><span id="count-paid">0</span><span class="stat-of"> / <span id="count-active-2">0</span></span></div>
+      </div>
+      <div class="stat stat-soft" id="backup-stat">
+        <div class="stat-label">Letzte Sicherheitskopie</div>
+        <div class="stat-value stat-value-sm" id="last-backup">–</div>
+      </div>
+      <div class="toolbar-right">
+        <label class="search">
+          <!--ICON:search-->
+          <input id="search" type="search" placeholder="Suchen (Name, Ort, Anmerkung …)" autocomplete="off">
+        </label>
+        <button class="btn btn-primary btn-lg" data-action="neu"><!--ICON:plus--> Neues Mitglied</button>
+      </div>
+    </section>
+
+    <section class="card table-card">
+      <div class="table-wrap">
+        <table class="grid" id="members-table">
+          <thead>
+            <tr>
+              <th class="col-nr">Nr.</th>
+              <th>Anrede</th>
+              <th>Titel vorne</th>
+              <th>Familienname</th>
+              <th>Vorname</th>
+              <th>Titel hinten</th>
+              <th>Geb.-Datum</th>
+              <th>PLZ</th>
+              <th>Stadt</th>
+              <th>Adresse</th>
+              <th>Mitglied seit</th>
+              <th>Anmerkung</th>
+              <th class="col-year" id="th-y0"></th>
+              <th class="col-year col-year-current" id="th-y1"></th>
+              <th class="col-year" id="th-y2"></th>
+              <th class="col-actions"><span class="sr-only">Aktionen</span></th>
+            </tr>
+          </thead>
+          <tbody id="members-body"></tbody>
+        </table>
+        <div id="members-empty" class="empty" hidden></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ============ Dialog: Mitglied ============ -->
+<dialog id="dlg-member" class="dialog dialog-lg">
+  <form id="form-member" method="dialog" novalidate>
+    <header class="dialog-head">
+      <h2 id="member-title">Neues Mitglied</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Schließen"><!--ICON:x--></button>
+    </header>
+    <div class="dialog-body">
+      <div id="member-errors" class="alert alert-danger" hidden></div>
+
+      <h3 class="section-title">Stammdaten</h3>
+      <div class="form-grid">
+        <label class="f f-2">Anrede *
+          <select name="anrede" required>
+            <option value="">– bitte wählen –</option>
+            <option>Frau</option>
+            <option>Herr</option>
+          </select>
+        </label>
+        <label class="f f-2">Titel vorangestellt
+          <input name="titel_vor" list="titel-vor-list" placeholder="z. B. Mag., Dr.">
+        </label>
+        <label class="f f-4">Familienname *
+          <input name="familienname" required autocomplete="off">
+        </label>
+        <label class="f f-4">Vorname *
+          <input name="vorname" required autocomplete="off">
+        </label>
+        <label class="f f-4">Titel nachgestellt
+          <input name="titel_nach" list="titel-nach-list" placeholder="z. B. BSc, MSc">
+        </label>
+        <label class="f f-4">Geburtsdatum
+          <input name="geburtsdatum" type="date" min="1900-01-01">
+        </label>
+        <label class="f f-4">Mitglied seit
+          <input name="beitrittsdatum" type="date" min="1900-01-01">
+        </label>
+        <label class="f f-2">PLZ
+          <input name="plz" inputmode="numeric" maxlength="10">
+        </label>
+        <label class="f f-4">Stadt
+          <input name="stadt">
+        </label>
+        <label class="f f-6">Adresse
+          <input name="adresse" placeholder="Straße, Hausnummer">
+        </label>
+        <label class="f f-12">Anmerkung
+          <textarea name="anmerkung" rows="2"></textarea>
+        </label>
+      </div>
+
+      <div id="member-exit-section">
+        <h3 class="section-title">Austritt</h3>
+        <p class="muted small">Wird ein Austrittsgrund eingetragen, erscheint das Mitglied nicht mehr in der Liste der aktiven Mitglieder.
+          Die Daten bleiben unter „Ehemalige“ erhalten.</p>
+        <div class="form-grid">
+          <label class="f f-4">Austrittsgrund
+            <select name="austrittsgrund">
+              <option value="">– aktives Mitglied –</option>
+              <option value="Austritt">Austritt</option>
+              <option value="Verstorben">Verstorben</option>
+            </select>
+          </label>
+          <label class="f f-4">Austrittsdatum
+            <input name="austrittsdatum" type="date" min="1900-01-01">
+          </label>
+          <label class="f f-4" id="field-sterbedatum">Sterbedatum
+            <input name="sterbedatum" type="date" min="1900-01-01">
+          </label>
+        </div>
+      </div>
+
+      <div id="member-fees" class="fees-info" hidden></div>
+    </div>
+    <footer class="dialog-foot">
+      <button type="button" class="btn btn-danger-ghost" id="btn-member-delete" hidden><!--ICON:trash--> Endgültig löschen</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-light" data-close>Abbrechen</button>
+      <button type="submit" class="btn btn-primary" id="btn-member-save">Speichern</button>
+    </footer>
+  </form>
+  <datalist id="titel-vor-list">
+    <option>Dr.</option><option>Mag.</option><option>Mag.a</option><option>DI</option><option>Ing.</option>
+    <option>Dipl.-Ing.</option><option>Prof.</option><option>Univ.-Prof.</option><option>MMag.</option><option>Dr. med.</option>
+  </datalist>
+  <datalist id="titel-nach-list">
+    <option>BSc</option><option>MSc</option><option>BA</option><option>MA</option><option>MBA</option>
+    <option>PhD</option><option>BEd</option><option>MEd</option><option>LL.M.</option>
+  </datalist>
+</dialog>
+
+<!-- ============ Dialog: Listenansicht (Ehemalige / Verstorbene / Geburtstage) ============ -->
+<dialog id="dlg-list" class="dialog dialog-xl">
+  <header class="dialog-head">
+    <h2 id="list-title"></h2>
+    <button type="button" class="icon-btn" data-close aria-label="Schließen"><!--ICON:x--></button>
+  </header>
+  <div class="dialog-body">
+    <div id="list-tabs" class="tabs" hidden></div>
+    <div id="list-legend" class="legend" hidden>
+      <span><i class="swatch swatch-round"></i> runder Geburtstag (10, 20, 30 …)</span>
+      <span><i class="swatch swatch-half"></i> halbrunder Geburtstag (25, 35, 45 …)</span>
+    </div>
+    <div class="table-wrap table-wrap-dialog">
+      <table class="grid"><thead id="list-head"></thead><tbody id="list-body"></tbody></table>
+      <div id="list-empty" class="empty" hidden></div>
+    </div>
+  </div>
+  <footer class="dialog-foot">
+    <span id="list-info" class="muted small"></span>
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-light" data-close>Schließen</button>
+    <button type="button" class="btn btn-primary" id="btn-list-export"><!--ICON:excel--> Als Excel speichern</button>
+  </footer>
+</dialog>
+
+<!-- ============ Dialog: Bestätigung ============ -->
+<dialog id="dlg-confirm" class="dialog dialog-sm">
+  <div class="dialog-body confirm-body">
+    <div class="confirm-icon" id="confirm-icon"><!--ICON:alert--></div>
+    <div>
+      <h2 id="confirm-title">Bitte bestätigen</h2>
+      <p id="confirm-text"></p>
+    </div>
+  </div>
+  <footer class="dialog-foot">
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-light" id="confirm-no">Abbrechen</button>
+    <button type="button" class="btn btn-primary" id="confirm-yes">OK</button>
+  </footer>
+</dialog>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<!--SCRIPTS-->
+</body>
+</html>

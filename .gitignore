@@ -1,0 +1,13 @@
+# DATENSCHUTZ: Echte Mitgliederdatenbanken und Exporte dürfen niemals ins Repository!
+*.db
+*.sqlite
+*.sqlite3
+*.xlsx
+*.xls
+*.csv
+# Ausnahme: die erfundenen Testdaten
+!testdaten/mitglieder_test.db
+
+# Testausgaben
+tests/output/
+node_modules/
