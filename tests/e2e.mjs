@@ -71,6 +71,7 @@ const getFile = async (name) => new Uint8Array(await page.evaluate((n) => Array.
 const queue = (name) => page.evaluate((n) => window.__pickQueue.push(n), name);
 const dbOf = async (name) => new SQL.Database(await getFile(name));
 const waitSaved = async () => { await page.waitForTimeout(80); await page.waitForFunction(() => window.__mv.state.pendingSaves === 0 && document.querySelector('#save-status').textContent.includes('Gespeichert')); };
+const todayLocal = () => page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
 const expectCount = (n) => page.waitForFunction((x) => document.querySelector('#count-active').textContent === String(x), n, { timeout: 5000 });
 const activeCount = async () => Number(await page.textContent('#count-active'));
 const confirmYes = async () => { await page.waitForSelector('#dlg-confirm[open]'); await page.click('#confirm-yes'); await page.waitForSelector('#dlg-confirm:not([open])', { state: 'attached' }); await page.evaluate(() => new Promise((r) => setTimeout(r, 30))); };
@@ -138,7 +139,7 @@ const newId = db.exec("SELECT id FROM mitglieder WHERE familienname='Testmann'")
 // Mitgliedsbeiträge: anhaken öffnet den Betragsdialog, abwählen nur mit Bestätigung
 const fee = (y) => `.fee[data-id="${newId}"][data-year="${y}"]`;
 const amountBtn = (y) => `.amount[data-id="${newId}"][data-year="${y}"]`;
-const feeRow = async (y) => (await dbOf('mitglieder_test.db')).exec(`SELECT bezahlt, betrag_cent FROM beitraege WHERE mitglied_id=${newId} AND jahr=${y}`)[0]?.values[0] || null;
+const feeRow = async (y) => (await dbOf('mitglieder_test.db')).exec(`SELECT bezahlt, betrag_cent, bezahlt_am FROM beitraege WHERE mitglied_id=${newId} AND jahr=${y}`)[0]?.values[0] || null;
 const dbSum = async (y) => (await dbOf('mitglieder_test.db')).exec(`SELECT COALESCE(SUM(b.betrag_cent),0) FROM beitraege b JOIN mitglieder m ON m.id=b.mitglied_id
   WHERE b.jahr=${y} AND b.bezahlt=1 AND m.austrittsgrund IS NULL`)[0].values[0][0];
 const euro = (c) => new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(c / 100) + ' €';
@@ -152,14 +153,21 @@ await page.click('#btn-fee-save');
 assert.ok(await page.isVisible('#fee-error'));
 ok('Anhaken öffnet den Betragsdialog, ungültige Beträge werden abgelehnt');
 await page.fill('#form-fee [name=betrag]', '45,50');
+const heute = await todayLocal();
+assert.equal(await page.inputValue('#form-fee [name=bezahlt_am]'), heute, 'Einzahlungsdatum mit heute vorbelegt');
+await page.fill('#form-fee [name=bezahlt_am]', `${Y + 1}-01-01`);
+await page.click('#btn-fee-save');
+assert.ok((await page.textContent('#fee-error')).includes('Zukunft'));
+ok('Einzahlungsdatum ist mit heute vorbelegt, ein Datum in der Zukunft wird abgelehnt');
+await page.fill('#form-fee [name=bezahlt_am]', `${Y}-01-20`);
 await page.screenshot({ path: join(outDir, '04_beitrag_betrag.png') });
 await page.click('#btn-fee-save');
 await waitSaved();
-assert.deepEqual(await feeRow(Y), [1, 4550]);
+assert.deepEqual(await feeRow(Y), [1, 4550, `${Y}-01-20`]);
 assert.equal(await page.isChecked(fee(Y)), true);
 assert.equal((await page.textContent(amountBtn(Y))).trim(), '45,50 €');
 assert.equal(await page.textContent('#sum-paid'), 'Summe ' + euro(await dbSum(Y)));
-ok(`Beitrag ${Y} mit 45,50 € gespeichert (Datenbank: betrag_cent = 4550), Summe oben aktualisiert`);
+ok(`Beitrag ${Y} mit 45,50 €, eingezahlt am 20.01.${Y}, gespeichert; Summe oben aktualisiert`);
 
 await page.click(fee(Y + 1));
 await page.waitForSelector('#dlg-fee[open]');
@@ -175,23 +183,24 @@ assert.equal(await page.inputValue('#form-fee [name=betrag]'), '45,50');
 await page.fill('#form-fee [name=betrag]', '1.234');
 await page.click('#btn-fee-save');
 await waitSaved();
-assert.deepEqual(await feeRow(Y - 1), [1, 123400]);
+assert.deepEqual(await feeRow(Y - 1), [1, 123400, heute]);
 ok('Zuletzt bezahlter Betrag wird vorgeschlagen; „1.234“ wird als 1.234,00 € gespeichert');
 
 await page.click(amountBtn(Y));
 await page.waitForSelector('#dlg-fee[open]');
 assert.equal(await page.inputValue('#form-fee [name=betrag]'), '45,50');
+assert.equal(await page.inputValue('#form-fee [name=bezahlt_am]'), `${Y}-01-20`, 'gespeichertes Einzahlungsdatum wird angezeigt');
 await page.fill('#form-fee [name=betrag]', '100');
 await page.click('#btn-fee-save');
 await waitSaved();
-assert.deepEqual(await feeRow(Y), [1, 10000]);
+assert.deepEqual(await feeRow(Y), [1, 10000, `${Y}-01-20`]);
 assert.equal((await page.textContent(amountBtn(Y))).trim(), '100 €');
 ok('Klick auf den Betrag ändert ihn (100 € gespeichert)');
 
 await page.click(fee(Y));
 await confirmNo();
 assert.equal(await page.isChecked(fee(Y)), true);
-assert.deepEqual(await feeRow(Y), [1, 10000]);
+assert.deepEqual(await feeRow(Y), [1, 10000, `${Y}-01-20`]);
 ok('Abwählen fragt nach – „Abbrechen“ lässt Haken und Betrag stehen');
 await page.click(fee(Y));
 await page.screenshot({ path: join(outDir, '04b_beitrag_bestaetigen.png') });
@@ -199,8 +208,8 @@ await confirmYes();
 await waitSaved();
 assert.equal(await page.isChecked(fee(Y)), false);
 assert.equal(await page.$(amountBtn(Y)), null);
-assert.deepEqual(await feeRow(Y), [0, null]);
-ok('Abwählen nach Bestätigung gespeichert, Betrag entfernt');
+assert.deepEqual(await feeRow(Y), [0, null, null]);
+ok('Abwählen nach Bestätigung gespeichert, Betrag und Einzahlungsdatum entfernt');
 
 // Bearbeiten: Austritt als verstorben
 await page.dblclick(`#members-body tr[data-id="${newId}"] td.name`);
@@ -294,7 +303,8 @@ ok('Löschen mit Rückfrage, Mitglied samt Beiträgen entfernt');
 // Einnahmen-Ausgaben-Rechnung
 {
   const fdb = async () => dbOf('mitglieder_test.db');
-  const expectFee = async (y) => (await fdb()).exec(`SELECT COALESCE(SUM(betrag_cent),0) FROM beitraege WHERE jahr=${y} AND bezahlt=1`)[0].values[0][0];
+  const expectFee = async (y) => (await fdb()).exec(`SELECT COALESCE(SUM(betrag_cent),0) FROM beitraege
+    WHERE bezahlt=1 AND COALESCE(substr(bezahlt_am,1,4), CAST(jahr AS TEXT))='${y}'`)[0].values[0][0];
   const entrySum = async (y, art) => (await fdb()).exec(`SELECT COALESCE(SUM(betrag_cent),0) FROM buchungen WHERE art='${art}' AND substr(datum,1,4)='${y}'`)[0].values[0][0];
   const txt = (sel) => page.textContent(sel).then((t) => t.trim());
   const checkSums = async (y) => {
@@ -309,10 +319,29 @@ ok('Löschen mit Rückfrage, Mitglied samt Beiträgen entfernt');
     return { fee, sin, sout };
   };
 
+  // Fall aus der Anforderung: Beitrag für das NÄCHSTE Jahr, eingezahlt im aktuellen Jahr -> zählt im aktuellen Jahr
+  const vorausId = (await fdb()).exec(`SELECT m.id FROM mitglieder m WHERE m.austrittsgrund IS NULL AND NOT EXISTS
+    (SELECT 1 FROM beitraege b WHERE b.mitglied_id=m.id AND b.jahr=${Y + 1} AND b.bezahlt=1) ORDER BY m.id LIMIT 1`)[0].values[0][0];
+  const feeYBefore = await expectFee(Y);
+  const feeY1Before = await expectFee(Y + 1);
+  await page.click(`.fee[data-id="${vorausId}"][data-year="${Y + 1}"]`);
+  await page.waitForSelector('#dlg-fee[open]');
+  await page.fill('#form-fee [name=betrag]', '30');
+  await page.fill('#form-fee [name=bezahlt_am]', `${Y}-01-12`);
+  await page.click('#btn-fee-save');
+  await waitSaved();
+  assert.equal(await expectFee(Y), feeYBefore + 3000);
+  assert.equal(await expectFee(Y + 1), feeY1Before);
+
   await page.click('[data-action="finanzen"]');
   await page.waitForSelector('#dlg-finance[open]');
   assert.equal(await page.inputValue('#fin-year'), String(Y));
   const before = await checkSums(Y);
+  assert.ok((await txt('#fin-in-body tr:first-child td:nth-child(3)')).includes(`für ${Y + 1} (im Voraus)`));
+  await page.selectOption('#fin-year', String(Y + 1));
+  await checkSums(Y + 1);
+  await page.selectOption('#fin-year', String(Y));
+  ok(`Beitrag ${Y + 1}, eingezahlt am 12.01.${Y}, zählt als Einnahme ${Y} (nicht ${Y + 1}); als Vorauszahlung ausgewiesen`);
   assert.ok(await page.isVisible('#fin-open'), 'Hinweis auf offene Rückerstattung (Druckerpapier aus Testdaten)');
   ok(`Finanzen ${Y}: oberste Zeile „Mitgliedsbeiträge ${Y}“ = ${euro(before.fee)}, Summen und Ergebnis stimmen`);
 
@@ -461,11 +490,11 @@ ok('Neue leere Datenbank angelegt');
   await waitSaved();
   await expectCount(1);
   const mdb = await dbOf('alt.db');
-  assert.deepEqual(mdb.exec(`SELECT bezahlt, betrag_cent FROM beitraege WHERE mitglied_id=1 AND jahr=${Y}`)[0].values[0], [1, null]);
-  assert.equal(mdb.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '3');
+  assert.deepEqual(mdb.exec(`SELECT bezahlt, betrag_cent, bezahlt_am FROM beitraege WHERE mitglied_id=1 AND jahr=${Y}`)[0].values[0], [1, null, null]);
+  assert.equal(mdb.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '4');
   assert.equal(mdb.exec("SELECT count(*) FROM sqlite_master WHERE name='buchungen'")[0].values[0][0], 1);
   assert.equal((await page.textContent(`.amount[data-id="1"][data-year="${Y}"]`)).trim(), 'Betrag?');
-  ok('Ältere Datenbank wird automatisch ergänzt (Betrags-Spalte, Tabelle für Einnahmen/Ausgaben), vorhandene Daten bleiben erhalten');
+  ok('Ältere Datenbank wird automatisch ergänzt (Betrag, Einzahlungsdatum, Tabelle für Einnahmen/Ausgaben), vorhandene Daten bleiben erhalten');
 }
 
 // Datenschutz-Abschluss
@@ -520,8 +549,16 @@ assert abs(lab['Summe Ausgaben'][5] - exp['sout'] / 100) < 0.001
 assert abs(lab['Einnahmen − Ausgaben'][4] - (exp['sin'] - exp['sout']) / 100) < 0.001
 assert lab['Druckerpapier Test'][6] == 'ja' and lab['Druckerpapier Test'][7] is not None
 assert lab['Druckerpapier'][7] == 'noch offen', lab['Druckerpapier']
+wbe = openpyxl.load_workbook(d + '/Einnahmen-Ausgaben.xlsx')
+assert wbe.sheetnames == ['EAR %d' % Y, 'Beiträge %d' % Y], wbe.sheetnames
+bt = wbe['Beiträge %d' % Y]
+assert [c.value for c in bt[4]] == ['Eingezahlt am','Beitragsjahr','Anrede','Titel vorangestellt','Vorname','Familienname','Titel nachgestellt','Betrag']
+brows = [r for r in bt.iter_rows(min_row=5, values_only=True)]
+bsum = [r for r in brows if r[5] == 'Summe'][0][7]
+assert abs(bsum - exp['fee'] / 100) < 0.001, (bsum, exp['fee'])
+assert any(r[1] == Y + 1 for r in brows), 'Vorauszahlung für das Folgejahr ist enthalten'
 print(len(nrs))
 `;
 const n = execFileSync('python3', ['-c', py, outDir, String(Y)]).toString().trim();
-ok(`Excel-Dateien geprüft (12 Monatsblätter, Alter zentriert & markiert, ${n} Mitglieder nummeriert, Beträge mit Summenzeile, Einnahmen-Ausgaben-Rechnung mit Summen und Ergebnis)`);
+ok(`Excel-Dateien geprüft (12 Monatsblätter, Alter zentriert & markiert, ${n} Mitglieder nummeriert, Beträge mit Summenzeile, Einnahmen-Ausgaben-Rechnung mit Summen, Ergebnis und Beitragsaufstellung)`);
 console.log(`\nAlle ${step} Prüfungen bestanden.`);

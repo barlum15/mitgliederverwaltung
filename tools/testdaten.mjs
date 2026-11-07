@@ -67,7 +67,7 @@ export async function buildTestDb() {
   const db = new SQL.Database();
   db.exec(readFileSync(join(root, 'src/schema.sql'), 'utf8'));
   const now = `${Y}-01-01 12:00:00`;
-  db.run("INSERT INTO meta(key, value) VALUES ('schema_version', '3'), ('erstellt_am', ?), ('testdaten', 'ja')", [now]);
+  db.run("INSERT INTO meta(key, value) VALUES ('schema_version', '4'), ('erstellt_am', ?), ('testdaten', 'ja')", [now]);
 
   const members = [...fixed.map((m) => {
     const [plz, stadt] = pick(ORTE);
@@ -98,14 +98,24 @@ export async function buildTestDb() {
   const ins = db.prepare(`INSERT INTO mitglieder (anrede, titel_vor, familienname, vorname, titel_nach, geburtsdatum, plz, stadt, adresse,
     beitrittsdatum, anmerkung, austrittsgrund, austrittsdatum, sterbedatum, erstellt_am, geaendert_am)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-  const fee = db.prepare('INSERT INTO beitraege (mitglied_id, jahr, bezahlt, betrag_cent, geaendert_am) VALUES (?,?,?,?,?)');
+  const fee = db.prepare('INSERT INTO beitraege (mitglied_id, jahr, bezahlt, betrag_cent, bezahlt_am, geaendert_am) VALUES (?,?,?,?,?,?)');
+  // Einzahlungsdatum: meist im Beitragsjahr; jeder 4. zahlt schon im Dezember des Vorjahres; nie in der Zukunft
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const payDate = (y) => {
+    if (rnd() < 0.05) return null; // älterer Eintrag ohne Datum
+    // Beiträge für das nächste Jahr wurden heuer im Voraus eingezahlt (ab Oktober)
+    const d = y > Y ? `${Y}-${pad(10 + Math.floor(rnd() * 3))}-${pad(1 + Math.floor(rnd() * 28))}`
+      : rnd() < 0.25 ? `${y - 1}-12-${pad(1 + Math.floor(rnd() * 28))}`
+      : `${y}-${pad(1 + Math.floor(rnd() * 5))}-${pad(1 + Math.floor(rnd() * 28))}`;
+    return d <= todayIso ? d : todayIso;
+  };
   members.forEach((m, idx) => {
     ins.run([m.anrede, m.titel_vor, m.familienname, m.vorname, m.titel_nach, m.geburtsdatum, m.plz, m.stadt, m.adresse,
       m.beitrittsdatum, m.anmerkung, m.austrittsgrund || null, m.austrittsdatum || null, m.sterbedatum || null, now, now]);
     const id = idx + 1;
     for (const year of [Y - 2, Y - 1, Y, Y + 1]) {
-      const p = year < Y ? 0.9 : year === Y ? 0.6 : 0.1;
-      if (rnd() < p) fee.run([id, year, 1, rnd() < 0.05 ? null : pick(BETRAEGE_CENT), now]);
+      const p = year < Y ? 0.9 : year === Y ? 0.6 : 0.15;
+      if (rnd() < p) fee.run([id, year, 1, rnd() < 0.05 ? null : pick(BETRAEGE_CENT), payDate(year), now]);
     }
   });
   ins.free();

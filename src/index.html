@@ -310,7 +310,7 @@
     </section>
   </div>
   <footer class="dialog-foot">
-    <span class="muted small">Mitgliedsbeiträge = Summe der bezahlten Beiträge, die für das gewählte Jahr eingetragen sind (inkl. ehemaliger Mitglieder).</span>
+    <span class="muted small">Mitgliedsbeiträge = alle im gewählten Jahr <strong>eingezahlten</strong> Beiträge (nach Einzahlungsdatum, auch Vorauszahlungen für das Folgejahr; inkl. ehemaliger Mitglieder).</span>
     <span class="spacer"></span>
     <button type="button" class="btn btn-light" data-close>Schließen</button>
     <button type="button" class="btn btn-primary" id="btn-fin-export"><!--ICON:excel--> Als Excel speichern</button>
@@ -373,6 +373,9 @@
       <label class="check-row"><input type="checkbox" name="paid" class="fee"> Beitrag bezahlt</label>
       <label class="f">Bezahlter Betrag
         <span class="money-input"><input name="betrag" inputmode="decimal" autocomplete="off" placeholder="z. B. 30,00"><span>€</span></span>
+      </label>
+      <label class="f fee-date">Eingezahlt am
+        <input name="bezahlt_am" type="date" min="1900-01-01">
       </label>
       <p id="fee-hint" class="muted small"></p>
       <div id="fee-error" class="alert alert-danger" hidden></div>

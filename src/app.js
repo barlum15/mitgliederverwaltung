@@ -18,6 +18,7 @@
   const DB_TYPES = [{ description: 'Mitglieder-Datenbank', accept: { 'application/x-sqlite3': ['.db', '.sqlite', '.sqlite3'] } }];
   const XLSX_TYPES = [{ description: 'Excel-Arbeitsmappe', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }];
   const BACKUP_WARN_DAYS = 30;
+  const SCHEMA_VERSION = '4';
 
   const state = {
     SQL: null,
@@ -202,12 +203,12 @@
   function loadData() {
     state.members = all('SELECT * FROM mitglieder');
     state.fees = new Map();
-    for (const f of all('SELECT mitglied_id, jahr, bezahlt, betrag_cent FROM beitraege')) {
+    for (const f of all('SELECT mitglied_id, jahr, bezahlt, betrag_cent, bezahlt_am FROM beitraege')) {
       if (!state.fees.has(f.mitglied_id)) state.fees.set(f.mitglied_id, new Map());
-      state.fees.get(f.mitglied_id).set(f.jahr, { paid: f.bezahlt, cents: f.betrag_cent ?? null });
+      state.fees.get(f.mitglied_id).set(f.jahr, { paid: f.bezahlt, cents: f.betrag_cent ?? null, date: f.bezahlt_am ?? null });
     }
   }
-  const feeOf = (id, year) => state.fees.get(id)?.get(year) || { paid: 0, cents: null };
+  const feeOf = (id, year) => state.fees.get(id)?.get(year) || { paid: 0, cents: null, date: null };
   const feePaid = (id, year) => feeOf(id, year).paid === 1;
   // Summe der bezahlten Beträge eines Jahres (nur aktive Mitglieder)
   function feeSum(year, members = state.members.filter(isActive)) {
@@ -229,9 +230,13 @@
       db.exec('ALTER TABLE beitraege ADD COLUMN betrag_cent INTEGER CHECK (betrag_cent IS NULL OR betrag_cent >= 0)');
       changed = true;
     }
+    if (!cols.includes('bezahlt_am')) { // Version 4: Einzahlungsdatum
+      db.exec('ALTER TABLE beitraege ADD COLUMN bezahlt_am TEXT');
+      changed = true;
+    }
     // Version 3: Tabelle buchungen wird über SCHEMA_SQL (CREATE TABLE IF NOT EXISTS) angelegt
     const v = db.exec("SELECT value FROM meta WHERE key = 'schema_version'");
-    if (!v.length || v[0].values[0][0] !== '3') changed = true;
+    if (!v.length || v[0].values[0][0] !== SCHEMA_VERSION) changed = true;
     return changed;
   }
 
@@ -304,7 +309,7 @@
     state.db = db;
     state.handle = handle;
     const isNew = !bytes.length;
-    if (getMeta('schema_version') !== '3') setMeta('schema_version', '3');
+    if (getMeta('schema_version') !== SCHEMA_VERSION) setMeta('schema_version', SCHEMA_VERSION);
     if (!getMeta('erstellt_am')) setMeta('erstellt_am', nowStamp());
     if (isNew || migrated) await persist();
     await kv('put', 'lastHandle', handle);
@@ -462,7 +467,7 @@
     e.preventDefault();
     if (feePaid(id, year)) {
       const ok = await confirmUnpaid(m, year);
-      if (ok) saveFee(id, year, 0, null);
+      if (ok) saveFee(id, year, 0, null, null);
     } else {
       openFee(id, year, { paid: 1 });
     }
@@ -491,11 +496,16 @@
     $('#fee-member').textContent = fullName(m);
     form.elements.paid.checked = !!isPaid;
     form.elements.betrag.value = cents === null ? '' : euroFmt.format(cents / 100);
+    // Einzahlungsdatum: gespeichertes Datum; bei neuer Zahlung heute
+    form.elements.bezahlt_am.value = f.paid ? (f.date || '') : todayISO();
+    form.elements.bezahlt_am.max = todayISO();
     form.elements.betrag.classList.remove('invalid');
+    form.elements.bezahlt_am.classList.remove('invalid');
     $('#fee-error').hidden = true;
     $('#fee-hint').textContent = f.cents === null && cents !== null
       ? `Vorgeschlagen: zuletzt bezahlter Betrag (${fmtEuro(cents)}). Bitte bei Bedarf anpassen.`
       : 'Der Betrag kann jedes Jahr unterschiedlich sein, z. B. wenn zusätzlich gespendet wird.';
+    $('#fee-hint').textContent += ' Das Einzahlungsdatum bestimmt, in welchem Jahr der Beitrag in den Finanzen als Einnahme zählt.';
     updateFeeForm();
     $('#dlg-fee').showModal();
     form.elements.betrag.focus();
@@ -504,6 +514,7 @@
   function updateFeeForm() {
     const form = $('#form-fee');
     form.elements.betrag.disabled = !form.elements.paid.checked;
+    form.elements.bezahlt_am.disabled = !form.elements.paid.checked;
   }
   async function onFeeSubmit(e) {
     e.preventDefault();
@@ -511,6 +522,7 @@
     const form = $('#form-fee');
     const paid = form.elements.paid.checked ? 1 : 0;
     let cents = null;
+    let date = null;
     if (paid) {
       cents = parseEuro(form.elements.betrag.value);
       if (Number.isNaN(cents)) {
@@ -520,21 +532,32 @@
         form.elements.betrag.focus();
         return;
       }
+      date = clean(form.elements.bezahlt_am.value);
+      const dateError = date && !isValidISO(date) ? 'Bitte ein gültiges Einzahlungsdatum eingeben.'
+        : date && date > todayISO() ? 'Das Einzahlungsdatum darf nicht in der Zukunft liegen.' : null;
+      if (dateError) {
+        $('#fee-error').textContent = dateError;
+        $('#fee-error').hidden = false;
+        form.elements.bezahlt_am.classList.add('invalid');
+        form.elements.bezahlt_am.focus();
+        return;
+      }
     } else if (feePaid(id, year)) {
       const m = state.members.find((x) => x.id === id);
       if (!(await confirmUnpaid(m, year))) return;
     }
     $('#dlg-fee').close();
-    saveFee(id, year, paid, cents);
+    saveFee(id, year, paid, cents, date);
   }
 
-  function saveFee(id, year, paid, cents) {
-    run(`INSERT INTO beitraege(mitglied_id, jahr, bezahlt, betrag_cent, geaendert_am) VALUES(?, ?, ?, ?, ?)
+  function saveFee(id, year, paid, cents, date) {
+    if (!paid) { cents = null; date = null; }
+    run(`INSERT INTO beitraege(mitglied_id, jahr, bezahlt, betrag_cent, bezahlt_am, geaendert_am) VALUES(?, ?, ?, ?, ?, ?)
          ON CONFLICT(mitglied_id, jahr) DO UPDATE SET bezahlt = excluded.bezahlt, betrag_cent = excluded.betrag_cent,
-           geaendert_am = excluded.geaendert_am`,
-      [id, year, paid, paid ? cents : null, nowStamp()]);
+           bezahlt_am = excluded.bezahlt_am, geaendert_am = excluded.geaendert_am`,
+      [id, year, paid, cents, date, nowStamp()]);
     if (!state.fees.has(id)) state.fees.set(id, new Map());
-    state.fees.get(id).set(year, { paid, cents: paid ? cents : null });
+    state.fees.get(id).set(year, { paid, cents, date });
     // nur die betroffene Zelle neu zeichnen (Scrollposition bleibt erhalten)
     const cell = $(`#members-body .fee[data-id="${id}"][data-year="${year}"]`)?.closest('td');
     const m = state.members.find((x) => x.id === id);
@@ -566,7 +589,8 @@
       fees.hidden = false;
       fees.innerHTML = `<strong>Bezahlte Mitgliedsbeiträge:</strong> ` +
         (paid.length
-          ? paid.map(([y, f]) => `${y}: ${f.cents === null ? 'Betrag unbekannt' : fmtEuro(f.cents)}`).join(' · ') +
+          ? paid.map(([y, f]) => `${y}: ${f.cents === null ? 'Betrag unbekannt' : fmtEuro(f.cents)}` +
+              (f.date ? ` (eingezahlt ${fmtDate(f.date)})` : '')).join(' · ') +
             (paid.length > 1 ? ` &nbsp;(gesamt ${fmtEuro(total)})` : '')
           : 'keine') + '<br>' +
         (m.erstellt_am ? `angelegt am ${esc(fmtStamp(m.erstellt_am))}` : '') +
@@ -910,11 +934,35 @@
   }
 
   // ================= Einnahmen-Ausgaben-Rechnung =================
-  // Mitgliedsbeiträge eines Jahres: alle als bezahlt markierten Beiträge dieses Jahres (auch ehemaliger Mitglieder)
+  // Mitgliedsbeiträge als Einnahme eines Jahres: maßgeblich ist das JAHR DER EINZAHLUNG (bezahlt_am),
+  // nicht das Beitragsjahr. Beispiel: Beitrag 2027, eingezahlt am 12.12.2026 -> Einnahme 2026.
+  // Ohne Einzahlungsdatum (z. B. ältere Einträge) zählt ersatzweise das Beitragsjahr.
+  // Berücksichtigt werden alle Mitglieder, auch ehemalige.
+  const FEE_CASH_YEAR = "COALESCE(substr(b.bezahlt_am, 1, 4), CAST(b.jahr AS TEXT))";
+  function feePayments(year) {
+    return all(`SELECT b.mitglied_id, b.jahr, b.betrag_cent, b.bezahlt_am, m.anrede, m.titel_vor, m.vorname, m.familienname, m.titel_nach
+                FROM beitraege b JOIN mitglieder m ON m.id = b.mitglied_id
+                WHERE b.bezahlt = 1 AND ${FEE_CASH_YEAR} = ?
+                ORDER BY COALESCE(b.bezahlt_am, b.jahr || '-12-31'), m.familienname, m.vorname`, [String(year)]);
+  }
   function feeIncome(year) {
-    const r = all(`SELECT COUNT(*) AS n, COALESCE(SUM(betrag_cent), 0) AS cents, COALESCE(SUM(betrag_cent IS NULL), 0) AS missing
-                   FROM beitraege WHERE jahr = ? AND bezahlt = 1`, [year])[0];
-    return { count: r.n, cents: r.cents, missing: r.missing };
+    const list = feePayments(year);
+    const byYear = new Map();
+    list.forEach((p) => byYear.set(p.jahr, (byYear.get(p.jahr) || 0) + 1));
+    return {
+      count: list.length,
+      cents: list.reduce((s, p) => s + (p.betrag_cent || 0), 0),
+      missing: list.filter((p) => p.betrag_cent === null).length,
+      noDate: list.filter((p) => !p.bezahlt_am).length,
+      byYear: [...byYear].sort((a, b) => a[0] - b[0]),
+      list
+    };
+  }
+  // Text wie "30 Beiträge: 27 für 2026, 3 für 2027 (Vorauszahlung)"
+  function feeBreakdown(fees, year) {
+    if (!fees.count) return 'keine Einzahlungen';
+    const parts = fees.byYear.map(([y, n]) => `${n} für ${y}` + (y > year ? ' (im Voraus)' : y < year ? ' (nachträglich)' : ''));
+    return `${fees.count} ${fees.count === 1 ? 'Beitrag' : 'Beiträge'} eingezahlt` + (fees.byYear.length > 1 || fees.byYear[0][0] !== year ? ': ' + parts.join(', ') : '');
   }
   function entriesOf(year) {
     return all(`SELECT * FROM buchungen WHERE substr(datum, 1, 4) = ? ORDER BY datum, id`, [String(year)]);
@@ -926,7 +974,7 @@
     const y = currentYear();
     const years = new Set([y - 1, y, y + 1]);
     all("SELECT DISTINCT CAST(substr(datum, 1, 4) AS INTEGER) AS j FROM buchungen").forEach((r) => years.add(r.j));
-    all('SELECT DISTINCT jahr AS j FROM beitraege WHERE bezahlt = 1').forEach((r) => years.add(r.j));
+    all(`SELECT DISTINCT CAST(${FEE_CASH_YEAR} AS INTEGER) AS j FROM beitraege b WHERE b.bezahlt = 1`).forEach((r) => years.add(r.j));
     return [...years].filter((j) => j > 1900 && j < 3000).sort((a, b) => b - a);
   }
   // Berechnet alle Zahlen eines Jahres (auch für den Export)
@@ -963,8 +1011,9 @@
         <button class="icon-btn primary" data-entry-edit="${e.id}" title="Bearbeiten" aria-label="Bearbeiten">${I.edit}</button>
         <button class="icon-btn danger" data-entry-delete="${e.id}" title="Löschen" aria-label="Löschen">${I.trash}</button></td>`;
 
-    const feeNote = `${d.fees.count} bezahlte Beiträge` +
-      (d.fees.missing ? ` · <strong>${d.fees.missing} ohne Betrag</strong> (bitte in der Mitgliederliste nachtragen)` : '');
+    const feeNote = esc(feeBreakdown(d.fees, year)) +
+      (d.fees.missing ? ` · <strong>${d.fees.missing} ohne Betrag</strong> (bitte in der Mitgliederliste nachtragen)` : '') +
+      (d.fees.noDate ? ` · ${d.fees.noDate} ohne Einzahlungsdatum (dem Beitragsjahr zugerechnet)` : '');
     $('#fin-in-body').innerHTML =
       `<tr class="fixed-row"><td></td><td>Mitgliedsbeiträge ${year}</td><td class="wrap-cell">${feeNote}</td>
          <td class="money">${fmtEuro(d.fees.cents)}</td><td class="col-actions"></td></tr>` +
@@ -1113,8 +1162,8 @@
   function exportFinance() {
     const d = financeData(state.finYear);
     const rows = [
-      { cells: [null, 'Einnahme', `Mitgliedsbeiträge ${d.year}`, `${d.fees.count} bezahlte Beiträge` + (d.fees.missing ? `, davon ${d.fees.missing} ohne Betrag` : ''),
-        d.fees.cents / 100, null, null, null] },
+      { cells: [null, 'Einnahme', `Mitgliedsbeiträge ${d.year}`, feeBreakdown(d.fees, d.year) + (d.fees.missing ? `, davon ${d.fees.missing} ohne Betrag` : '') +
+        ' – Einzelaufstellung im Blatt „Beiträge“', d.fees.cents / 100, null, null, null] },
       ...d.incomes.map((e) => ({ cells: [e.datum, 'Einnahme', e.bezeichnung, e.anmerkung, e.betrag_cent / 100, null, null, null] })),
       ...d.expenses.map((e) => ({ cells: [e.datum, 'Ausgabe', e.bezeichnung, e.anmerkung, null, e.betrag_cent / 100,
         e.bar_vorgelegt ? 'ja' : null, e.bar_vorgelegt ? (e.erstattet_am || 'noch offen') : null] }))
@@ -1133,6 +1182,16 @@
         { cells: [null, null, 'Summe Ausgaben', null, null, d.sumOut / 100, null, null] },
         { cells: [null, null, 'Einnahmen − Ausgaben', null, d.result / 100, null, null, null] }
       ]
+    }, {
+      name: `Beiträge ${d.year}`,
+      title: `Eingezahlte Mitgliedsbeiträge ${d.year}`,
+      subtitle: `Alle Beiträge, die ${d.year} eingezahlt wurden (maßgeblich ist das Einzahlungsdatum, nicht das Beitragsjahr)`,
+      emptyText: 'Keine Einzahlungen in diesem Jahr.',
+      columns: [C('Eingezahlt am', 13, 'date'), C('Beitragsjahr', 11, 'center'), C('Anrede', 8), C('Titel vorangestellt', 12),
+        C('Vorname', 15), C('Familienname', 18), C('Titel nachgestellt', 12), C('Betrag', 13, 'money')],
+      rows: d.fees.list.map((p) => ({ cells: [p.bezahlt_am || `kein Datum (Beitragsjahr ${p.jahr})`, p.jahr, p.anrede, p.titel_vor,
+        p.vorname, p.familienname, p.titel_nach, p.betrag_cent === null ? null : p.betrag_cent / 100] })),
+      totals: [{ cells: [null, null, null, null, null, 'Summe', null, d.fees.cents / 100] }]
     }], `Einnahmen-Ausgaben_${d.year}.xlsx`);
   }
 
@@ -1212,7 +1271,9 @@
     form.elements.sterbedatum.addEventListener('change', onExitChange);
     $('#form-fee').addEventListener('submit', onFeeSubmit);
     $('#form-fee').elements.paid.addEventListener('change', updateFeeForm);
-    $('#form-fee').elements.betrag.addEventListener('input', (e) => { e.target.classList.remove('invalid'); $('#fee-error').hidden = true; });
+    for (const f of ['betrag', 'bezahlt_am']) {
+      $('#form-fee').elements[f].addEventListener('input', (e) => { e.target.classList.remove('invalid'); $('#fee-error').hidden = true; });
+    }
     // Finanzen
     $('#fin-year').addEventListener('change', (e) => { state.finYear = Number(e.target.value); renderFinance(); });
     $('#btn-fin-export').addEventListener('click', exportFinance);
