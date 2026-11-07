@@ -24,7 +24,8 @@
     db: null,
     handle: null,
     members: [],
-    fees: new Map(),       // mitglied_id -> Map(jahr -> 0/1)
+    fees: new Map(),       // mitglied_id -> Map(jahr -> { paid: 0/1, cents: Zahl oder null })
+    feeEdit: null,         // gerade im Beitragsdialog bearbeiteter Beitrag
     search: '',
     saveChain: Promise.resolve(true),
     pendingSaves: 0,
@@ -84,6 +85,25 @@
     return null;
   }
   const isActive = (m) => !m.austrittsgrund;
+
+  // ----- Geldbeträge (intern in Cent, damit keine Rundungsfehler entstehen) -----
+  const euroFmt = new Intl.NumberFormat('de-AT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  function fmtEuro(cents, { short = false } = {}) {
+    if (cents === null || cents === undefined) return '';
+    if (short && cents % 100 === 0) return new Intl.NumberFormat('de-AT').format(cents / 100) + ' €';
+    return euroFmt.format(cents / 100) + ' €';
+  }
+  // Eingabe wie "30", "30,5", "30,50 €", "1.234,50" oder "1234.50" -> Cent; '' -> null; ungültig -> NaN
+  function parseEuro(text) {
+    let s = String(text ?? '').replace(/€|eur|\s/gi, '');
+    if (s === '') return null;
+    if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+    else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, ''); // "1.234" = Tausenderpunkt
+    if (!/^\d+(\.\d{0,2})?$/.test(s)) return NaN;
+    const cents = Math.round(parseFloat(s) * 100);
+    return cents >= 0 && cents < 100000000 ? cents : NaN;
+  }
+
   function byName(a, b) {
     return collator.compare(a.familienname || '', b.familienname || '') ||
       collator.compare(a.vorname || '', b.vorname || '') ||
@@ -179,12 +199,35 @@
   function loadData() {
     state.members = all('SELECT * FROM mitglieder');
     state.fees = new Map();
-    for (const f of all('SELECT mitglied_id, jahr, bezahlt FROM beitraege')) {
+    for (const f of all('SELECT mitglied_id, jahr, bezahlt, betrag_cent FROM beitraege')) {
       if (!state.fees.has(f.mitglied_id)) state.fees.set(f.mitglied_id, new Map());
-      state.fees.get(f.mitglied_id).set(f.jahr, f.bezahlt);
+      state.fees.get(f.mitglied_id).set(f.jahr, { paid: f.bezahlt, cents: f.betrag_cent ?? null });
     }
   }
-  const feePaid = (id, year) => state.fees.get(id)?.get(year) === 1;
+  const feeOf = (id, year) => state.fees.get(id)?.get(year) || { paid: 0, cents: null };
+  const feePaid = (id, year) => feeOf(id, year).paid === 1;
+  // Summe der bezahlten Beträge eines Jahres (nur aktive Mitglieder)
+  function feeSum(year, members = state.members.filter(isActive)) {
+    return members.reduce((s, m) => s + (feePaid(m.id, year) ? (feeOf(m.id, year).cents || 0) : 0), 0);
+  }
+  // Vorschlag für einen neuen Betrag: der zuletzt bezahlte Betrag dieses Mitglieds
+  function lastAmount(id, beforeYear) {
+    const entries = Array.from(state.fees.get(id) || []).filter(([y, f]) => f.paid && f.cents !== null);
+    const earlier = entries.filter(([y]) => y < beforeYear).sort((a, b) => b[0] - a[0]);
+    const later = entries.filter(([y]) => y > beforeYear).sort((a, b) => a[0] - b[0]);
+    return (earlier[0] || later[0] || [null, { cents: null }])[1].cents;
+  }
+
+  // Ältere Datenbanken auf den aktuellen Stand bringen (nur ergänzen, nie Daten löschen)
+  function migrate(db) {
+    let changed = false;
+    const cols = db.exec('PRAGMA table_info(beitraege)')[0].values.map((v) => v[1]);
+    if (!cols.includes('betrag_cent')) {
+      db.exec('ALTER TABLE beitraege ADD COLUMN betrag_cent INTEGER CHECK (betrag_cent IS NULL OR betrag_cent >= 0)');
+      changed = true;
+    }
+    return changed;
+  }
 
   // Schreibt die komplette Datenbank in die lokale Datei. Aufrufe werden nacheinander ausgeführt.
   function persist() {
@@ -249,14 +292,15 @@
       return false;
     }
     db.exec(window.SCHEMA_SQL);
+    const migrated = migrate(db);
     db.exec('PRAGMA foreign_keys = ON');
     if (state.db) state.db.close();
     state.db = db;
     state.handle = handle;
     const isNew = !bytes.length;
-    if (!getMeta('schema_version')) setMeta('schema_version', '1');
+    if (getMeta('schema_version') !== '2') setMeta('schema_version', '2');
     if (!getMeta('erstellt_am')) setMeta('erstellt_am', nowStamp());
-    if (isNew) await persist();
+    if (isNew || migrated) await persist();
     await kv('put', 'lastHandle', handle);
     showApp();
     return true;
@@ -346,7 +390,7 @@
 
     $('#count-active').textContent = active.length;
     $('#count-active-2').textContent = active.length;
-    $('#count-paid').textContent = active.filter((m) => feePaid(m.id, years[1])).length;
+    renderFeeStats(active);
 
     $('#members-body').innerHTML = shown.map((m) => `
       <tr class="clickable" data-id="${m.id}">
@@ -362,9 +406,7 @@
         <td class="cut" title="${esc(m.adresse)}">${esc(m.adresse)}</td>
         <td>${fmtDate(m.beitrittsdatum)}</td>
         <td class="note" title="${esc(m.anmerkung)}">${esc(m.anmerkung)}</td>
-        ${years.map((y, i) => `<td class="col-year${i === 1 ? ' col-year-current' : ''}">
-          <input type="checkbox" class="fee" data-id="${m.id}" data-year="${y}" ${feePaid(m.id, y) ? 'checked' : ''}
-            title="Mitgliedsbeitrag ${y}" aria-label="Mitgliedsbeitrag ${y} für ${esc(fullName(m, false))} bezahlt"></td>`).join('')}
+        ${years.map((y, i) => `<td class="col-year${i === 1 ? ' col-year-current' : ''}">${feeCell(m, y)}</td>`).join('')}
         <td class="col-actions">
           <button class="icon-btn primary" data-edit="${m.id}" title="Bearbeiten" aria-label="Bearbeiten">${I.edit}</button>
           <button class="icon-btn danger" data-delete="${m.id}" title="Löschen" aria-label="Löschen">${I.trash}</button>
@@ -387,35 +429,111 @@
   }
 
   // ================= Mitgliedsbeiträge =================
+  // Zelle in der Mitgliederliste: Häkchen + bezahlter Betrag (anklickbar zum Ändern)
+  function feeCell(m, y) {
+    const f = feeOf(m.id, y);
+    const label = `Mitgliedsbeitrag ${y} für ${esc(fullName(m, false))}`;
+    const amount = f.paid
+      ? `<button type="button" class="amount${f.cents === null ? ' amount-missing' : ''}" data-fee-edit data-id="${m.id}" data-year="${y}"
+           title="Betrag ${y} ändern" aria-label="Betrag ${label} ändern">${f.cents === null ? 'Betrag?' : fmtEuro(f.cents, { short: true })}</button>`
+      : '';
+    return `<div class="fee-cell"><input type="checkbox" class="fee" data-id="${m.id}" data-year="${y}" ${f.paid ? 'checked' : ''}
+      title="Mitgliedsbeitrag ${y}" aria-label="${label} bezahlt">${amount}</div>`;
+  }
+
+  function renderFeeStats(active = state.members.filter(isActive)) {
+    const y = feeYears()[1];
+    $('#count-paid').textContent = active.filter((m) => feePaid(m.id, y)).length;
+    $('#sum-paid').textContent = 'Summe ' + fmtEuro(feeSum(y, active));
+  }
+
   async function onFeeClick(e) {
     const cb = e.target;
     const id = Number(cb.dataset.id);
     const year = Number(cb.dataset.year);
     const m = state.members.find((x) => x.id === id);
-    if (!cb.checked) {
-      // Abwählen nur nach Bestätigung
-      e.preventDefault();
-      const ok = await confirmDialog({
-        title: 'Beitrag als nicht bezahlt markieren?',
-        html: `Soll der Mitgliedsbeitrag <strong>${year}</strong> für <strong>${esc(fullName(m))}</strong> wirklich als <strong>nicht bezahlt</strong> markiert werden?`,
-        ok: 'Ja, nicht bezahlt',
-        danger: true
-      });
-      if (!ok) { cb.checked = true; return; }
-      cb.checked = false;
-      setFee(id, year, 0);
+    // Der Haken wird erst nach Bestätigung bzw. nach Eingabe des Betrags gesetzt/entfernt
+    e.preventDefault();
+    if (feePaid(id, year)) {
+      const ok = await confirmUnpaid(m, year);
+      if (ok) saveFee(id, year, 0, null);
     } else {
-      setFee(id, year, 1);
+      openFee(id, year, { paid: 1 });
     }
   }
-  function setFee(id, year, paid) {
-    run(`INSERT INTO beitraege(mitglied_id, jahr, bezahlt, geaendert_am) VALUES(?, ?, ?, ?)
-         ON CONFLICT(mitglied_id, jahr) DO UPDATE SET bezahlt = excluded.bezahlt, geaendert_am = excluded.geaendert_am`,
-      [id, year, paid, nowStamp()]);
+
+  function confirmUnpaid(m, year) {
+    const f = feeOf(m.id, year);
+    return confirmDialog({
+      title: 'Beitrag als nicht bezahlt markieren?',
+      html: `Soll der Mitgliedsbeitrag <strong>${year}</strong> für <strong>${esc(fullName(m))}</strong> wirklich als <strong>nicht bezahlt</strong> markiert werden?` +
+        (f.cents !== null ? `<br><br>Der eingetragene Betrag von <strong>${fmtEuro(f.cents)}</strong> wird dabei entfernt.` : ''),
+      ok: 'Ja, nicht bezahlt',
+      danger: true
+    });
+  }
+
+  // Dialog zum Eintragen/Ändern von "bezahlt" und Betrag
+  function openFee(id, year, { paid } = {}) {
+    const m = state.members.find((x) => x.id === id);
+    const f = feeOf(id, year);
+    const isPaid = paid ?? f.paid;
+    const cents = f.cents ?? (isPaid ? lastAmount(id, year) : null);
+    state.feeEdit = { id, year };
+    const form = $('#form-fee');
+    $('#fee-title').textContent = `Mitgliedsbeitrag ${year}`;
+    $('#fee-member').textContent = fullName(m);
+    form.elements.paid.checked = !!isPaid;
+    form.elements.betrag.value = cents === null ? '' : euroFmt.format(cents / 100);
+    form.elements.betrag.classList.remove('invalid');
+    $('#fee-error').hidden = true;
+    $('#fee-hint').textContent = f.cents === null && cents !== null
+      ? `Vorgeschlagen: zuletzt bezahlter Betrag (${fmtEuro(cents)}). Bitte bei Bedarf anpassen.`
+      : 'Der Betrag kann jedes Jahr unterschiedlich sein, z. B. wenn zusätzlich gespendet wird.';
+    updateFeeForm();
+    $('#dlg-fee').showModal();
+    form.elements.betrag.focus();
+    form.elements.betrag.select();
+  }
+  function updateFeeForm() {
+    const form = $('#form-fee');
+    form.elements.betrag.disabled = !form.elements.paid.checked;
+  }
+  async function onFeeSubmit(e) {
+    e.preventDefault();
+    const { id, year } = state.feeEdit;
+    const form = $('#form-fee');
+    const paid = form.elements.paid.checked ? 1 : 0;
+    let cents = null;
+    if (paid) {
+      cents = parseEuro(form.elements.betrag.value);
+      if (Number.isNaN(cents)) {
+        $('#fee-error').textContent = 'Bitte einen gültigen Betrag eingeben, z. B. 30 oder 45,50.';
+        $('#fee-error').hidden = false;
+        form.elements.betrag.classList.add('invalid');
+        form.elements.betrag.focus();
+        return;
+      }
+    } else if (feePaid(id, year)) {
+      const m = state.members.find((x) => x.id === id);
+      if (!(await confirmUnpaid(m, year))) return;
+    }
+    $('#dlg-fee').close();
+    saveFee(id, year, paid, cents);
+  }
+
+  function saveFee(id, year, paid, cents) {
+    run(`INSERT INTO beitraege(mitglied_id, jahr, bezahlt, betrag_cent, geaendert_am) VALUES(?, ?, ?, ?, ?)
+         ON CONFLICT(mitglied_id, jahr) DO UPDATE SET bezahlt = excluded.bezahlt, betrag_cent = excluded.betrag_cent,
+           geaendert_am = excluded.geaendert_am`,
+      [id, year, paid, paid ? cents : null, nowStamp()]);
     if (!state.fees.has(id)) state.fees.set(id, new Map());
-    state.fees.get(id).set(year, paid);
-    const y = feeYears()[1];
-    $('#count-paid').textContent = state.members.filter(isActive).filter((m) => feePaid(m.id, y)).length;
+    state.fees.get(id).set(year, { paid, cents: paid ? cents : null });
+    // nur die betroffene Zelle neu zeichnen (Scrollposition bleibt erhalten)
+    const cell = $(`#members-body .fee[data-id="${id}"][data-year="${year}"]`)?.closest('td');
+    const m = state.members.find((x) => x.id === id);
+    if (cell && m) cell.innerHTML = feeCell(m, year);
+    renderFeeStats();
     persist();
   }
 
@@ -437,10 +555,15 @@
     updateExitFields();
     const fees = $('#member-fees');
     if (m) {
-      const paid = Array.from(state.fees.get(m.id) || []).filter(([, v]) => v === 1).map(([y]) => y).sort();
+      const paid = Array.from(state.fees.get(m.id) || []).filter(([, f]) => f.paid === 1).sort((a, b) => b[0] - a[0]);
+      const total = paid.reduce((s, [, f]) => s + (f.cents || 0), 0);
       fees.hidden = false;
-      fees.innerHTML = `<strong>Bezahlte Mitgliedsbeiträge:</strong> ${paid.length ? paid.join(', ') : 'keine'}` +
-        (m.erstellt_am ? ` &nbsp;·&nbsp; angelegt am ${esc(fmtStamp(m.erstellt_am))}` : '') +
+      fees.innerHTML = `<strong>Bezahlte Mitgliedsbeiträge:</strong> ` +
+        (paid.length
+          ? paid.map(([y, f]) => `${y}: ${f.cents === null ? 'Betrag unbekannt' : fmtEuro(f.cents)}`).join(' · ') +
+            (paid.length > 1 ? ` &nbsp;(gesamt ${fmtEuro(total)})` : '')
+          : 'keine') + '<br>' +
+        (m.erstellt_am ? `angelegt am ${esc(fmtStamp(m.erstellt_am))}` : '') +
         (m.geaendert_am ? ` &nbsp;·&nbsp; zuletzt geändert am ${esc(fmtStamp(m.geaendert_am))}` : '');
     } else {
       fees.hidden = true;
@@ -655,14 +778,14 @@
       }).join('');
       const list = months[state.list.month];
       head.innerHTML = `<tr><th class="num">Tag</th><th>Anrede</th><th>Titel vorne</th><th>Vorname</th><th>Familienname</th><th>Titel hinten</th>` +
-        `<th>Geburtsdatum</th><th class="num">Alter ${year}</th><th>Ort</th></tr>`;
+        `<th>Geburtsdatum</th><th class="center">Alter ${year}</th><th>Ort</th></tr>`;
       rows = list.map((m) => {
         const age = ageThisYear(m);
         const r = roundness(age);
         return `<tr class="${r ? 'bday-' + r : ''}">
           <td class="num">${Number(m.geburtsdatum.slice(8, 10))}.</td><td>${esc(m.anrede)}</td><td>${esc(m.titel_vor)}</td><td>${esc(m.vorname)}</td>
           <td class="name">${esc(m.familienname)}</td><td>${esc(m.titel_nach)}</td><td>${fmtDate(m.geburtsdatum)}</td>
-          <td class="num"><span class="badge badge-age">${age}</span></td><td class="cut">${esc([m.plz, m.stadt].filter(Boolean).join(' '))}</td></tr>`;
+          <td class="center"><span class="badge badge-age">${age}</span></td><td class="cut">${esc([m.plz, m.stadt].filter(Boolean).join(' '))}</td></tr>`;
       });
       emptyText = `Im ${MONATE[state.list.month]} hat kein aktives Mitglied Geburtstag.`;
       const without = state.members.filter(isActive).filter((m) => !isValidISO(m.geburtsdatum)).length;
@@ -706,11 +829,19 @@
       columns: [C('Nr.', 6, 'number'), C('Anrede', 8), C('Titel vorangestellt', 12), C('Familienname', 18), C('Vorname', 15),
         C('Titel nachgestellt', 12), C('Geburtsdatum', 13, 'date'), C('PLZ', 7), C('Stadt', 24), C('Adresse', 26),
         C('Mitglied seit', 13, 'date'), C('Anmerkung', 30),
-        ...years.map((y) => C(`Beitrag ${y}`, 11))],
+        ...years.flatMap((y) => [C(`Beitrag ${y}`, 11), C(`Betrag ${y}`, 12, 'money')])],
       rows: list.map((m) => ({
         cells: [m._nr, m.anrede, m.titel_vor, m.familienname, m.vorname, m.titel_nach, m.geburtsdatum, m.plz, m.stadt, m.adresse,
-          m.beitrittsdatum, m.anmerkung, ...years.map((y) => (feePaid(m.id, y) ? 'bezahlt' : 'offen'))]
-      }))
+          m.beitrittsdatum, m.anmerkung, ...years.flatMap((y) => {
+            const f = feeOf(m.id, y);
+            return f.paid ? ['bezahlt', f.cents === null ? null : f.cents / 100] : ['offen', null];
+          })]
+      })),
+      // Summenzeile unter der Liste
+      totals: [{
+        cells: [null, null, null, 'Summe', null, null, null, null, null, null, null, null,
+          ...years.flatMap((y) => [`${list.filter((m) => feePaid(m.id, y)).length} bezahlt`, feeSum(y, list) / 100])]
+      }]
     };
     return saveExport([sheet], `Mitgliederliste_${todayISO()}.xlsx`);
   }
@@ -724,7 +855,7 @@
       subtitle: `Alter = Alter, das im Jahr ${year} erreicht wird · dunkelgelb = runder, hellgelb = halbrunder Geburtstag · nur aktive Mitglieder`,
       emptyText: `Im ${name} hat kein aktives Mitglied Geburtstag.`,
       columns: [C('Tag', 6, 'number'), C('Anrede', 8), C('Titel vorangestellt', 12), C('Vorname', 15), C('Familienname', 18),
-        C('Titel nachgestellt', 12), C('Geburtsdatum', 13, 'date'), C(`Alter ${year}`, 10, 'number'), C('Runder Geburtstag', 16),
+        C('Titel nachgestellt', 12), C('Geburtsdatum', 13, 'date'), C(`Alter ${year}`, 10, 'center'), C('Runder Geburtstag', 16),
         C('PLZ', 7), C('Stadt', 24), C('Adresse', 26)],
       rows: months[i].map((m) => {
         const age = ageThisYear(m);
@@ -821,6 +952,8 @@
     const body = $('#members-body');
     body.addEventListener('click', (e) => {
       if (e.target.classList.contains('fee')) { onFeeClick(e); return; }
+      const amount = e.target.closest('[data-fee-edit]');
+      if (amount) { openFee(Number(amount.dataset.id), Number(amount.dataset.year)); return; }
       const edit = e.target.closest('[data-edit]');
       const del = e.target.closest('[data-delete]');
       const find = (id) => state.members.find((m) => m.id === Number(id));
@@ -843,6 +976,9 @@
     form.addEventListener('submit', onMemberSubmit);
     form.elements.austrittsgrund.addEventListener('change', onExitChange);
     form.elements.sterbedatum.addEventListener('change', onExitChange);
+    $('#form-fee').addEventListener('submit', onFeeSubmit);
+    $('#form-fee').elements.paid.addEventListener('change', updateFeeForm);
+    $('#form-fee').elements.betrag.addEventListener('input', (e) => { e.target.classList.remove('invalid'); $('#fee-error').hidden = true; });
     $('#btn-member-delete').addEventListener('click', async () => {
       if (state.editing && (await deleteMember(state.editing))) $('#dlg-member').close();
     });

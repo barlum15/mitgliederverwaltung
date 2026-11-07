@@ -135,25 +135,72 @@ assert.deepEqual(saved, ['Ing.', 'MSc', `${Y - 40}-05-10`, 'Klagenfurt']);
 ok('Neues Mitglied angelegt und sofort in die Datenbankdatei geschrieben');
 const newId = db.exec("SELECT id FROM mitglieder WHERE familienname='Testmann'")[0].values[0][0];
 
-// Beitrag anhaken / abwählen mit Bestätigung
-const fee = `.fee[data-id="${newId}"][data-year="${Y}"]`;
-await page.click(fee);
+// Mitgliedsbeiträge: anhaken öffnet den Betragsdialog, abwählen nur mit Bestätigung
+const fee = (y) => `.fee[data-id="${newId}"][data-year="${y}"]`;
+const amountBtn = (y) => `.amount[data-id="${newId}"][data-year="${y}"]`;
+const feeRow = async (y) => (await dbOf('mitglieder_test.db')).exec(`SELECT bezahlt, betrag_cent FROM beitraege WHERE mitglied_id=${newId} AND jahr=${y}`)[0]?.values[0] || null;
+const dbSum = async (y) => (await dbOf('mitglieder_test.db')).exec(`SELECT COALESCE(SUM(b.betrag_cent),0) FROM beitraege b JOIN mitglieder m ON m.id=b.mitglied_id
+  WHERE b.jahr=${y} AND b.bezahlt=1 AND m.austrittsgrund IS NULL`)[0].values[0][0];
+const euro = (c) => new Intl.NumberFormat('de-AT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(c / 100) + ' €';
+
+await page.click(fee(Y));
+await page.waitForSelector('#dlg-fee[open]');
+assert.equal(await page.isChecked(fee(Y)), false, 'Haken erst nach dem Speichern');
+assert.equal(await page.isChecked('#form-fee [name=paid]'), true);
+await page.fill('#form-fee [name=betrag]', 'abc');
+await page.click('#btn-fee-save');
+assert.ok(await page.isVisible('#fee-error'));
+ok('Anhaken öffnet den Betragsdialog, ungültige Beträge werden abgelehnt');
+await page.fill('#form-fee [name=betrag]', '45,50');
+await page.screenshot({ path: join(outDir, '04_beitrag_betrag.png') });
+await page.click('#btn-fee-save');
 await waitSaved();
-db = await dbOf('mitglieder_test.db');
-assert.equal(db.exec(`SELECT bezahlt FROM beitraege WHERE mitglied_id=${newId} AND jahr=${Y}`)[0].values[0][0], 1);
-ok(`Beitrag ${Y} angehakt und gespeichert`);
-await page.click(fee);
+assert.deepEqual(await feeRow(Y), [1, 4550]);
+assert.equal(await page.isChecked(fee(Y)), true);
+assert.equal((await page.textContent(amountBtn(Y))).trim(), '45,50 €');
+assert.equal(await page.textContent('#sum-paid'), 'Summe ' + euro(await dbSum(Y)));
+ok(`Beitrag ${Y} mit 45,50 € gespeichert (Datenbank: betrag_cent = 4550), Summe oben aktualisiert`);
+
+await page.click(fee(Y + 1));
+await page.waitForSelector('#dlg-fee[open]');
+await page.click('#dlg-fee .btn-light[data-close]');
+await page.waitForSelector('#dlg-fee:not([open])', { state: 'attached' });
+assert.equal(await page.isChecked(fee(Y + 1)), false);
+assert.equal(await feeRow(Y + 1), null);
+ok('Abbrechen im Betragsdialog setzt keinen Haken');
+
+await page.click(fee(Y - 1));
+await page.waitForSelector('#dlg-fee[open]');
+assert.equal(await page.inputValue('#form-fee [name=betrag]'), '45,50');
+await page.fill('#form-fee [name=betrag]', '1.234');
+await page.click('#btn-fee-save');
+await waitSaved();
+assert.deepEqual(await feeRow(Y - 1), [1, 123400]);
+ok('Zuletzt bezahlter Betrag wird vorgeschlagen; „1.234“ wird als 1.234,00 € gespeichert');
+
+await page.click(amountBtn(Y));
+await page.waitForSelector('#dlg-fee[open]');
+assert.equal(await page.inputValue('#form-fee [name=betrag]'), '45,50');
+await page.fill('#form-fee [name=betrag]', '100');
+await page.click('#btn-fee-save');
+await waitSaved();
+assert.deepEqual(await feeRow(Y), [1, 10000]);
+assert.equal((await page.textContent(amountBtn(Y))).trim(), '100 €');
+ok('Klick auf den Betrag ändert ihn (100 € gespeichert)');
+
+await page.click(fee(Y));
 await confirmNo();
-assert.equal(await page.isChecked(fee), true);
-ok('Abwählen fragt nach – „Abbrechen“ lässt den Haken stehen');
-await page.click(fee);
-await page.screenshot({ path: join(outDir, '04_beitrag_bestaetigen.png') });
+assert.equal(await page.isChecked(fee(Y)), true);
+assert.deepEqual(await feeRow(Y), [1, 10000]);
+ok('Abwählen fragt nach – „Abbrechen“ lässt Haken und Betrag stehen');
+await page.click(fee(Y));
+await page.screenshot({ path: join(outDir, '04b_beitrag_bestaetigen.png') });
 await confirmYes();
 await waitSaved();
-assert.equal(await page.isChecked(fee), false);
-db = await dbOf('mitglieder_test.db');
-assert.equal(db.exec(`SELECT bezahlt FROM beitraege WHERE mitglied_id=${newId} AND jahr=${Y}`)[0].values[0][0], 0);
-ok('Abwählen nach Bestätigung gespeichert');
+assert.equal(await page.isChecked(fee(Y)), false);
+assert.equal(await page.$(amountBtn(Y)), null);
+assert.deepEqual(await feeRow(Y), [0, null]);
+ok('Abwählen nach Bestätigung gespeichert, Betrag entfernt');
 
 // Bearbeiten: Austritt als verstorben
 await page.dblclick(`#members-body tr[data-id="${newId}"] td.name`);
@@ -205,6 +252,8 @@ const july = await page.$$eval('#list-body tr', (trs) => trs.map((tr) => ({ cls:
 const petra = july.find((r) => r.cells[4] === 'Öhlinger');
 assert.equal(petra.cells[7], String(20));
 assert.equal(petra.cls, 'bday-round');
+assert.equal(await page.$eval('#list-body tr:first-child td:nth-child(8)', (td) => getComputedStyle(td).textAlign), 'center');
+assert.equal(await page.$eval('#list-head th:nth-child(8)', (th) => getComputedStyle(th).textAlign), 'center');
 ok('Geburtstage Juli: Öhlinger (geb. 06.07.' + (Y - 20) + ') wird heuer 20 und ist als runder Geburtstag markiert');
 await page.screenshot({ path: join(outDir, '08_geburtstage.png') });
 await page.click('#btn-list-export');
@@ -280,6 +329,33 @@ assert.deepEqual(ndb.exec("SELECT name FROM sqlite_master WHERE type='table' ORD
 await page.screenshot({ path: join(outDir, '09_leere_datenbank.png') });
 ok('Neue leere Datenbank angelegt');
 
+// Ältere Datenbank (ohne Betrags-Spalte) wird beim Öffnen ergänzt, Daten bleiben erhalten
+{
+  const old = new SQL.Database();
+  old.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE mitglieder (id INTEGER PRIMARY KEY AUTOINCREMENT, anrede TEXT NOT NULL, titel_vor TEXT, familienname TEXT NOT NULL,
+      vorname TEXT NOT NULL, titel_nach TEXT, geburtsdatum TEXT, plz TEXT, stadt TEXT, adresse TEXT, beitrittsdatum TEXT, anmerkung TEXT,
+      austrittsdatum TEXT, austrittsgrund TEXT, sterbedatum TEXT, erstellt_am TEXT, geaendert_am TEXT);
+    CREATE TABLE beitraege (mitglied_id INTEGER NOT NULL, jahr INTEGER NOT NULL, bezahlt INTEGER NOT NULL DEFAULT 0, geaendert_am TEXT,
+      PRIMARY KEY (mitglied_id, jahr));
+    INSERT INTO meta VALUES ('schema_version', '1');
+    INSERT INTO mitglieder (anrede, familienname, vorname) VALUES ('Frau', 'Altdaten', 'Erika');
+    INSERT INTO beitraege VALUES (1, ${Y}, 1, NULL);`);
+  await putFile('alt.db', old.export());
+  await page.click('[data-action="wechseln"]');
+  await page.waitForSelector('#start:not([hidden])');
+  await queue('alt.db');
+  await page.click('#btn-open');
+  await page.waitForSelector('#app:not([hidden])');
+  await waitSaved();
+  await expectCount(1);
+  const mdb = await dbOf('alt.db');
+  assert.deepEqual(mdb.exec(`SELECT bezahlt, betrag_cent FROM beitraege WHERE mitglied_id=1 AND jahr=${Y}`)[0].values[0], [1, null]);
+  assert.equal(mdb.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '2');
+  assert.equal((await page.textContent(`.amount[data-id="1"][data-year="${Y}"]`)).trim(), 'Betrag?');
+  ok('Ältere Datenbank wird automatisch um die Betrags-Spalte ergänzt, vorhandene Beiträge bleiben erhalten');
+}
+
 // Datenschutz-Abschluss
 assert.deepEqual(external, [], 'Externe Anfragen: ' + external.join(', '));
 const csp = await page.evaluate(() => window.__csp);
@@ -305,13 +381,23 @@ assert cell.fill.fgColor.rgb == 'FFFCD34D'
 ml = openpyxl.load_workbook(d + '/Mitgliederliste.xlsx')['Mitglieder']
 hdr = [c.value for c in ml[4]]
 assert hdr[:6] == ['Nr.','Anrede','Titel vorangestellt','Familienname','Vorname','Titel nachgestellt'], hdr
-assert hdr[-3:] == ['Beitrag %d' % (Y+1), 'Beitrag %d' % Y, 'Beitrag %d' % (Y-1)], hdr
-nrs = [r[0] for r in ml.iter_rows(min_row=5, values_only=True)]
+assert hdr[-6:] == ['Beitrag %d' % (Y+1), 'Betrag %d' % (Y+1), 'Beitrag %d' % Y, 'Betrag %d' % Y, 'Beitrag %d' % (Y-1), 'Betrag %d' % (Y-1)], hdr
+data = [r for r in ml.iter_rows(min_row=5, values_only=True) if r[0] is not None]
+nrs = [r[0] for r in data]
 assert nrs == list(range(1, len(nrs)+1))
+total = [r for r in ml.iter_rows(min_row=5, values_only=True) if r[3] == 'Summe'][0]
+for col in range(len(hdr) - 5, len(hdr), 2):
+    assert abs(sum(r[col] or 0 for r in data) - total[col]) < 0.001, (hdr[col], total[col])
+    assert total[col - 1].endswith('bezahlt')
+assert total[hdr.index('Betrag %d' % Y)] > 0
+money = [c for c in ml[5] if c.column == hdr.index('Betrag %d' % (Y-1)) + 1][0]
+assert '€' in money.number_format, money.number_format
+age = [c for c in ws['H'] if c.value == 20][0]
+assert age.alignment.horizontal == 'center'
 v = openpyxl.load_workbook(d + '/Verstorbene.xlsx')['Verstorbene']
 assert [c.value for c in v[4]] == ['Nr.','Anrede','Vorname','Familienname','Geburtsdatum','Sterbedatum']
 print(len(nrs))
 `;
 const n = execFileSync('python3', ['-c', py, outDir, String(Y)]).toString().trim();
-ok(`Excel-Dateien geprüft (12 Monatsblätter, Alter & Markierung korrekt, ${n} Mitglieder nummeriert)`);
+ok(`Excel-Dateien geprüft (12 Monatsblätter, Alter zentriert & markiert, ${n} Mitglieder nummeriert, Beträge mit Summenzeile)`);
 console.log(`\nAlle ${step} Prüfungen bestanden.`);

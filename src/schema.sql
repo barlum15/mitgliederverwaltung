@@ -28,10 +28,12 @@ CREATE TABLE IF NOT EXISTS mitglieder (
 );
 
 -- Ein Eintrag pro Mitglied und Jahr; so bleiben alle Jahre dauerhaft erhalten.
+-- (Ältere Datenbanken ohne Spalte betrag_cent werden beim Öffnen vom Programm ergänzt.)
 CREATE TABLE IF NOT EXISTS beitraege (
   mitglied_id   INTEGER NOT NULL REFERENCES mitglieder(id) ON DELETE CASCADE,
   jahr          INTEGER NOT NULL,
   bezahlt       INTEGER NOT NULL DEFAULT 0 CHECK (bezahlt IN (0, 1)),
+  betrag_cent   INTEGER CHECK (betrag_cent IS NULL OR betrag_cent >= 0), -- bezahlter Betrag in Cent (3050 = 30,50 €)
   geaendert_am  TEXT,
   PRIMARY KEY (mitglied_id, jahr)
 );

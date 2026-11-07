@@ -160,6 +160,7 @@ body {
 .stat-value { font-size: 34px; font-weight: 800; line-height: 1.1; letter-spacing: -1px; }
 .stat-value-sm { font-size: 17px; letter-spacing: 0; padding-top: 8px; font-weight: 700; }
 .stat-of { font-size: 18px; font-weight: 600; opacity: .7; letter-spacing: 0; }
+.stat-sub { font-size: 12.5px; font-weight: 700; color: var(--success); margin-top: 2px; font-variant-numeric: tabular-nums; }
 .stat-soft { background: var(--card); color: var(--text); box-shadow: var(--shadow); }
 .stat-soft .stat-label { color: var(--muted); }
 .stat-warn { background: var(--accent-soft); box-shadow: 0 0 0 2px #fcd34d inset; }
@@ -205,9 +206,21 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; }
 }
 .grid thead .col-nr { z-index: 3; }
 .grid td.name { font-weight: 700; }
-.grid td.cut { max-width: 165px; overflow: hidden; text-overflow: ellipsis; }
-.grid td.note { max-width: 180px; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
-.grid .col-year { text-align: center; width: 70px; }
+.grid td.cut { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.grid td.note { max-width: 150px; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.grid .col-year { text-align: center; width: 96px; }
+.grid td.col-year { padding: 4px 6px; }
+.grid thead th.wrap { white-space: normal; line-height: 1.2; }
+.grid .center { text-align: center; }
+.fee-cell { display: flex; align-items: center; gap: 6px; justify-content: flex-start; }
+.amount {
+  font: inherit; font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+  border: 1px solid transparent; background: var(--success-soft); color: #065f46;
+  border-radius: 7px; padding: 2px 6px; cursor: pointer; white-space: nowrap;
+}
+.amount:hover { border-color: var(--success); }
+.amount-missing { background: var(--accent-soft); color: #92400e; font-weight: 600; }
+.amount-missing:hover { border-color: var(--accent); }
 .grid th.col-year-current { color: var(--primary); }
 .grid td.col-year-current { box-shadow: inset 1px 0 0 var(--primary-100), inset -1px 0 0 var(--primary-100); }
 .grid .col-actions { width: 84px; text-align: right; }
@@ -281,6 +294,16 @@ tr.bday-half .badge-age { background: #f59e0b; color: #fff; }
 .alert-danger { background: var(--danger-soft); color: #991b1b; border: 1px solid #fecaca; }
 .alert ul { margin: 4px 0 0 18px; padding: 0; }
 
+.fee-member { margin: 0 0 14px; font-size: 16px; font-weight: 700; }
+.check-row { display: flex; align-items: center; gap: 10px; font-weight: 600; margin-bottom: 14px; cursor: pointer; }
+.money-input { display: flex; align-items: stretch; }
+.money-input input { flex: 1; border-top-right-radius: 0 !important; border-bottom-right-radius: 0 !important; font-size: 18px !important; font-weight: 700 !important; text-align: right; }
+.money-input input:disabled { background: var(--row-alt); color: var(--muted); }
+.money-input > span {
+  display: grid; place-items: center; padding: 0 14px; font-size: 16px; font-weight: 700; color: var(--muted);
+  border: 1px solid var(--line-strong); border-left: 0; border-radius: 0 9px 9px 0; background: var(--row-alt);
+}
+#fee-hint { margin: 10px 0 0; }
 .confirm-body { display: flex; gap: 16px; align-items: flex-start; padding-top: 24px; }
 .confirm-body h2 { margin: 2px 0 6px; font-size: 18px; }
 .confirm-body p { margin: 0; color: #334155; line-height: 1.5; }
@@ -329,6 +352,7 @@ tr.bday-half .badge-age { background: #f59e0b; color: #fff; }
   .stat-value { font-size: 24px; }
   .stat-value-sm { font-size: 14px; padding-top: 4px; }
   .stat-of { font-size: 14px; }
+  .stat-sub { font-size: 11px; margin-top: 0; }
   .search { height: 38px; }
   .toolbar-right .btn-lg { padding: 8px 14px; font-size: 14px; }
   .table-card { min-height: 160px; }

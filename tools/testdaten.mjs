@@ -21,8 +21,11 @@ const MAENNER = ['Johann', 'Josef', 'Franz', 'Michael', 'Thomas', 'Andreas', 'St
 const NACHNAMEN = ['Gruber', 'Huber', 'Bauer', 'Wagner', 'Müller', 'Pichler', 'Steiner', 'Moser', 'Mayer', 'Hofer', 'Leitner', 'Berger',
   'Fuchs', 'Eder', 'Fischer', 'Schmid', 'Winkler', 'Weber', 'Schwarz', 'Maier', 'Reiter', 'Wimmer', 'Egger', 'Brunner', 'Lang',
   'Baumgartner', 'Auer', 'Binder', 'Lechner', 'Wolf', 'Wallner', 'Aigner', 'Ebner', 'Koller', 'Lehner', 'Haas', 'Öhlinger', 'Ölz', 'Zöhrer', 'Ärnstein'];
-const ORTE = [['9020', 'Klagenfurt am Wörthersee'], ['9500', 'Villach'], ['9300', 'St. Veit an der Glan'], ['9100', 'Völkermarkt'],
-  ['9400', 'Wolfsberg'], ['9800', 'Spittal an der Drau'], ['9220', 'Velden am Wörther See'], ['9560', 'Feldkirchen in Kärnten']];
+// Landeshauptstädte, gleichmäßig über Österreich verteilt
+const ORTE = [['1010', 'Wien'], ['8010', 'Graz'], ['4020', 'Linz'], ['5020', 'Salzburg'], ['6020', 'Innsbruck'],
+  ['3100', 'St. Pölten'], ['6900', 'Bregenz'], ['7000', 'Eisenstadt'], ['9020', 'Klagenfurt am Wörthersee']];
+// Beiträge: meist der Grundbetrag, manchmal mit zusätzlicher Spende
+const BETRAEGE_CENT = [3000, 3000, 3000, 3000, 3000, 3000, 3500, 4000, 5000, 10000, 4550];
 const STRASSEN = ['Hauptplatz', 'Bahnhofstraße', 'Kirchgasse', 'Lindenweg', 'Schulstraße', 'Seeweg', 'Am Anger', 'Bergstraße', 'Wiesengasse', 'Mühlweg'];
 const TITEL_VOR = ['Dr.', 'Mag.', 'Ing.', 'DI', 'Mag.a', 'Prof.'];
 const TITEL_NACH = ['BSc', 'MSc', 'MBA', 'BA', 'PhD'];
@@ -95,14 +98,14 @@ export async function buildTestDb() {
   const ins = db.prepare(`INSERT INTO mitglieder (anrede, titel_vor, familienname, vorname, titel_nach, geburtsdatum, plz, stadt, adresse,
     beitrittsdatum, anmerkung, austrittsgrund, austrittsdatum, sterbedatum, erstellt_am, geaendert_am)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-  const fee = db.prepare('INSERT INTO beitraege (mitglied_id, jahr, bezahlt, geaendert_am) VALUES (?,?,?,?)');
+  const fee = db.prepare('INSERT INTO beitraege (mitglied_id, jahr, bezahlt, betrag_cent, geaendert_am) VALUES (?,?,?,?,?)');
   members.forEach((m, idx) => {
     ins.run([m.anrede, m.titel_vor, m.familienname, m.vorname, m.titel_nach, m.geburtsdatum, m.plz, m.stadt, m.adresse,
       m.beitrittsdatum, m.anmerkung, m.austrittsgrund || null, m.austrittsdatum || null, m.sterbedatum || null, now, now]);
     const id = idx + 1;
     for (const year of [Y - 2, Y - 1, Y, Y + 1]) {
       const p = year < Y ? 0.9 : year === Y ? 0.6 : 0.1;
-      if (rnd() < p) fee.run([id, year, 1, now]);
+      if (rnd() < p) fee.run([id, year, 1, rnd() < 0.05 ? null : pick(BETRAEGE_CENT), now]);
     }
   });
   ins.free();

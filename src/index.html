@@ -99,6 +99,7 @@
       <div class="stat stat-soft">
         <div class="stat-label">Beitrag <span id="year-current"></span> bezahlt</div>
         <div class="stat-value"><span id="count-paid">0</span><span class="stat-of"> / <span id="count-active-2">0</span></span></div>
+        <div class="stat-sub" id="sum-paid"></div>
       </div>
       <div class="stat stat-soft" id="backup-stat">
         <div class="stat-label">Letzte Sicherheitskopie</div>
@@ -120,15 +121,15 @@
             <tr>
               <th class="col-nr">Nr.</th>
               <th>Anrede</th>
-              <th>Titel vorne</th>
+              <th class="wrap">Titel vorne</th>
               <th>Familienname</th>
               <th>Vorname</th>
-              <th>Titel hinten</th>
+              <th class="wrap">Titel hinten</th>
               <th>Geb.-Datum</th>
               <th>PLZ</th>
               <th>Stadt</th>
               <th>Adresse</th>
-              <th>Mitglied seit</th>
+              <th class="wrap">Mitglied seit</th>
               <th>Anmerkung</th>
               <th class="col-year" id="th-y0"></th>
               <th class="col-year col-year-current" id="th-y1"></th>
@@ -258,6 +259,30 @@
     <button type="button" class="btn btn-light" data-close>Schließen</button>
     <button type="button" class="btn btn-primary" id="btn-list-export"><!--ICON:excel--> Als Excel speichern</button>
   </footer>
+</dialog>
+
+<!-- ============ Dialog: Mitgliedsbeitrag ============ -->
+<dialog id="dlg-fee" class="dialog dialog-sm">
+  <form id="form-fee" novalidate>
+    <header class="dialog-head">
+      <h2 id="fee-title">Mitgliedsbeitrag</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Schließen"><!--ICON:x--></button>
+    </header>
+    <div class="dialog-body">
+      <p id="fee-member" class="fee-member"></p>
+      <label class="check-row"><input type="checkbox" name="paid" class="fee"> Beitrag bezahlt</label>
+      <label class="f">Bezahlter Betrag
+        <span class="money-input"><input name="betrag" inputmode="decimal" autocomplete="off" placeholder="z. B. 30,00"><span>€</span></span>
+      </label>
+      <p id="fee-hint" class="muted small"></p>
+      <div id="fee-error" class="alert alert-danger" hidden></div>
+    </div>
+    <footer class="dialog-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-light" data-close>Abbrechen</button>
+      <button type="submit" class="btn btn-primary" id="btn-fee-save">Speichern</button>
+    </footer>
+  </form>
 </dialog>
 
 <!-- ============ Dialog: Bestätigung ============ -->

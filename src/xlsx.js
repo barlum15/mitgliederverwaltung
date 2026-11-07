@@ -50,13 +50,15 @@
   }
 
   // ---------- Formatvorlagen (styles.xml) ----------
-  // Varianten: 0 = normal, 1 = runder Geburtstag, 2 = halbrunder Geburtstag
-  // Typen:     0 = Text,   1 = Datum,             2 = Zahl
-  // Index = 2 + Variante * 3 + Typ; 0 = Standard, 1 = Kopfzeile, 11 = Titel, 12 = Untertitel
-  const TYPE_INDEX = { text: 0, date: 1, number: 2 };
-  const VARIANT_INDEX = { round: 1, half: 2 };
+  // Varianten (Zeilenart): normal, round = runder Geburtstag, half = halbrunder Geburtstag, total = Summenzeile
+  // Typen (Spaltenart):    text, date = Datum, number = Zahl, money = Eurobetrag, center = Zahl zentriert
+  // Index = 2 + Variante * Typanzahl + Typ; 0 = Standard, 1 = Kopfzeile, danach Titel und Untertitel
+  const TYPES = ['text', 'date', 'number', 'money', 'center'];
+  const VARIANTS = ['normal', 'round', 'half', 'total'];
+  const TITLE_STYLE = 2 + VARIANTS.length * TYPES.length;
+  const SUBTITLE_STYLE = TITLE_STYLE + 1;
   function styleIndex(variant, type) {
-    return 2 + (VARIANT_INDEX[variant] || 0) * 3 + (TYPE_INDEX[type] || 0);
+    return 2 + Math.max(0, VARIANTS.indexOf(variant)) * TYPES.length + Math.max(0, TYPES.indexOf(type));
   }
 
   function stylesXml() {
@@ -65,7 +67,8 @@
       '<fill><patternFill patternType="gray125"/></fill>',
       '<fill><patternFill patternType="solid"><fgColor rgb="FF0E7490"/><bgColor indexed="64"/></patternFill></fill>', // Kopfzeile
       '<fill><patternFill patternType="solid"><fgColor rgb="FFFCD34D"/><bgColor indexed="64"/></patternFill></fill>', // rund
-      '<fill><patternFill patternType="solid"><fgColor rgb="FFFEF3C7"/><bgColor indexed="64"/></patternFill></fill>'  // halbrund
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFFEF3C7"/><bgColor indexed="64"/></patternFill></fill>', // halbrund
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill>'  // Summe
     ];
     const fonts = [
       '<font><sz val="11"/><name val="Calibri"/><family val="2"/></font>',
@@ -85,22 +88,27 @@
       (fill ? ' applyFill="1"' : '') + (border ? ' applyBorder="1"' : '') +
       (extra ? ' applyAlignment="1">' + extra + '</xf>' : '/>');
     const top = '<alignment vertical="top" wrapText="1"/>';
+    const center = '<alignment horizontal="center" vertical="top"/>';
     const cellXfs = [
       xf(0, 0, 0, 0),                                  // 0 Standard
       xf(0, 1, 2, 1, '<alignment vertical="center" wrapText="1"/>') // 1 Kopfzeile
     ];
-    const variants = [[0, 0], [2, 3], [2, 4]]; // [Schrift, Füllung] je Variante
-    for (const [font, fill] of variants) {
-      cellXfs.push(xf(0, font, fill, 1, top));   // Text
-      cellXfs.push(xf(164, font, fill, 1, top)); // Datum
-      cellXfs.push(xf(1, font, fill, 1, top));   // Zahl
+    const variantLook = { normal: [0, 0], round: [2, 3], half: [2, 4], total: [2, 5] }; // [Schrift, Füllung]
+    for (const v of VARIANTS) {
+      const [font, fill] = variantLook[v];
+      cellXfs.push(xf(0, font, fill, 1, top));      // Text
+      cellXfs.push(xf(164, font, fill, 1, top));    // Datum
+      cellXfs.push(xf(1, font, fill, 1, top));      // Zahl
+      cellXfs.push(xf(165, font, fill, 1, top));    // Eurobetrag
+      cellXfs.push(xf(1, font, fill, 1, center));   // Zahl zentriert
     }
-    cellXfs.push(xf(0, 3, 0, 0)); // 11 Titel
-    cellXfs.push(xf(0, 4, 0, 0)); // 12 Untertitel
+    cellXfs.push(xf(0, 3, 0, 0)); // Titel
+    cellXfs.push(xf(0, 4, 0, 0)); // Untertitel
 
     return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
       '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
-      '<numFmts count="1"><numFmt numFmtId="164" formatCode="dd\\.mm\\.yyyy;@"/></numFmts>' +
+      '<numFmts count="2"><numFmt numFmtId="164" formatCode="dd\\.mm\\.yyyy;@"/>' +
+      '<numFmt numFmtId="165" formatCode="#,##0.00\\ &quot;€&quot;"/></numFmts>' +
       `<fonts count="${fonts.length}">${fonts.join('')}</fonts>` +
       `<fills count="${fills.length}">${fills.join('')}</fills>` +
       `<borders count="${borders.length}">${borders.join('')}</borders>` +
@@ -119,7 +127,7 @@
       const serial = isoToSerial(value);
       if (serial !== null) return `<c r="${ref}" s="${style}"><v>${serial}</v></c>`;
     }
-    if (type === 'number' && typeof value === 'number' && isFinite(value)) {
+    if ((type === 'number' || type === 'money' || type === 'center') && typeof value === 'number' && isFinite(value)) {
       return `<c r="${ref}" s="${style}"><v>${value}</v></c>`;
     }
     return `<c r="${ref}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xmlEscape(value)}</t></is></c>`;
@@ -131,10 +139,10 @@
     const rowsXml = [];
     let r = 1;
     if (sheet.title) {
-      rowsXml.push(`<row r="${r}" ht="22" customHeight="1">${cellXml('A' + r, sheet.title, 'text', 11)}</row>`);
+      rowsXml.push(`<row r="${r}" ht="22" customHeight="1">${cellXml('A' + r, sheet.title, 'text', TITLE_STYLE)}</row>`);
       r++;
       if (sheet.subtitle) {
-        rowsXml.push(`<row r="${r}">${cellXml('A' + r, sheet.subtitle, 'text', 12)}</row>`);
+        rowsXml.push(`<row r="${r}">${cellXml('A' + r, sheet.subtitle, 'text', SUBTITLE_STYLE)}</row>`);
         r++;
       }
       r++; // Leerzeile
@@ -144,15 +152,18 @@
       cols.map((c, i) => cellXml(colName(i) + r, c.header, 'text', 1)).join('') + '</row>');
     r++;
     if (!sheet.rows.length && sheet.emptyText) {
-      rowsXml.push(`<row r="${r}">${cellXml('A' + r, sheet.emptyText, 'text', 12)}</row>`);
+      rowsXml.push(`<row r="${r}">${cellXml('A' + r, sheet.emptyText, 'text', SUBTITLE_STYLE)}</row>`);
       r++;
     }
-    for (const row of sheet.rows) {
+    const pushRow = (row) => {
       rowsXml.push(`<row r="${r}">` + cols.map((c, i) =>
         cellXml(colName(i) + r, row.cells[i], c.type, styleIndex(row.style, c.type))).join('') + '</row>');
       r++;
-    }
+    };
+    sheet.rows.forEach(pushRow);
     const lastDataRow = Math.max(headerRow, r - 1);
+    // Summenzeilen stehen unter den Daten und gehören nicht zum Filterbereich
+    (sheet.totals || []).forEach((row) => pushRow({ style: 'total', ...row }));
     const colsXml = '<cols>' + cols.map((c, i) =>
       `<col min="${i + 1}" max="${i + 1}" width="${c.width || 14}" customWidth="1"/>`).join('') + '</cols>';
     const pane = `<pane ySplit="${headerRow}" topLeftCell="A${headerRow + 1}" activePane="bottomLeft" state="frozen"/>` +
