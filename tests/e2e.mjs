@@ -141,7 +141,7 @@ const amountBtn = (y) => `.amount[data-id="${newId}"][data-year="${y}"]`;
 const feeRow = async (y) => (await dbOf('mitglieder_test.db')).exec(`SELECT bezahlt, betrag_cent FROM beitraege WHERE mitglied_id=${newId} AND jahr=${y}`)[0]?.values[0] || null;
 const dbSum = async (y) => (await dbOf('mitglieder_test.db')).exec(`SELECT COALESCE(SUM(b.betrag_cent),0) FROM beitraege b JOIN mitglieder m ON m.id=b.mitglied_id
   WHERE b.jahr=${y} AND b.bezahlt=1 AND m.austrittsgrund IS NULL`)[0].values[0][0];
-const euro = (c) => new Intl.NumberFormat('de-AT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(c / 100) + ' €';
+const euro = (c) => new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(c / 100) + ' €';
 
 await page.click(fee(Y));
 await page.waitForSelector('#dlg-fee[open]');
@@ -291,6 +291,117 @@ assert.equal(db.exec(`SELECT count(*) FROM mitglieder WHERE id=${newId}`)[0].val
 assert.equal(db.exec(`SELECT count(*) FROM beitraege WHERE mitglied_id=${newId}`)[0].values[0][0], 0);
 ok('Löschen mit Rückfrage, Mitglied samt Beiträgen entfernt');
 
+// Einnahmen-Ausgaben-Rechnung
+{
+  const fdb = async () => dbOf('mitglieder_test.db');
+  const expectFee = async (y) => (await fdb()).exec(`SELECT COALESCE(SUM(betrag_cent),0) FROM beitraege WHERE jahr=${y} AND bezahlt=1`)[0].values[0][0];
+  const entrySum = async (y, art) => (await fdb()).exec(`SELECT COALESCE(SUM(betrag_cent),0) FROM buchungen WHERE art='${art}' AND substr(datum,1,4)='${y}'`)[0].values[0][0];
+  const txt = (sel) => page.textContent(sel).then((t) => t.trim());
+  const checkSums = async (y) => {
+    const fee = await expectFee(y);
+    const sin = fee + await entrySum(y, 'Einnahme');
+    const sout = await entrySum(y, 'Ausgabe');
+    assert.equal(await txt('#fin-in-body tr:first-child td:nth-child(2)'), `Mitgliedsbeiträge ${y}`);
+    assert.equal(await txt('#fin-in-body tr:first-child td:nth-child(4)'), euro(fee));
+    assert.equal(await txt('#fin-sum-in'), euro(sin));
+    assert.equal(await txt('#fin-sum-out'), euro(sout));
+    assert.equal(await txt('#fin-result'), (sin - sout < 0 ? '− ' : '') + euro(Math.abs(sin - sout)));
+    return { fee, sin, sout };
+  };
+
+  await page.click('[data-action="finanzen"]');
+  await page.waitForSelector('#dlg-finance[open]');
+  assert.equal(await page.inputValue('#fin-year'), String(Y));
+  const before = await checkSums(Y);
+  assert.ok(await page.isVisible('#fin-open'), 'Hinweis auf offene Rückerstattung (Druckerpapier aus Testdaten)');
+  ok(`Finanzen ${Y}: oberste Zeile „Mitgliedsbeiträge ${Y}“ = ${euro(before.fee)}, Summen und Ergebnis stimmen`);
+
+  // Ausgabe bar vorgelegt
+  await page.click('[data-entry-new="Ausgabe"]');
+  await page.waitForSelector('#dlg-entry[open]');
+  assert.equal(await page.inputValue('#form-entry [name=datum]'), await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }), 'Datum ist mit heute vorbelegt');
+  await page.click('#btn-entry-save');
+  assert.ok(await page.isVisible('#entry-errors'));
+  await page.fill('#form-entry [name=bezeichnung]', 'Druckerpapier Test');
+  await page.fill('#form-entry [name=datum]', `${Y}-01-12`);
+  await page.fill('#form-entry [name=betrag]', '12,40');
+  await page.fill('#form-entry [name=anmerkung]', 'Rechnung 123');
+  assert.equal(await page.isVisible('#entry-refund'), false);
+  await page.check('#form-entry [name=bar_vorgelegt]');
+  assert.equal(await page.isVisible('#entry-refund'), true);
+  await page.screenshot({ path: join(outDir, '11_ausgabe_erfassen.png') });
+  await page.click('#btn-entry-save');
+  await waitSaved();
+  let row = (await fdb()).exec("SELECT art, datum, betrag_cent, bar_vorgelegt, erstattet_am, anmerkung FROM buchungen WHERE bezeichnung='Druckerpapier Test'")[0].values[0];
+  assert.deepEqual(row, ['Ausgabe', `${Y}-01-12`, 1240, 1, null, 'Rechnung 123']);
+  ok('Ausgabe „Druckerpapier“ 12.01. mit 12,40 €, bar vorgelegt, gespeichert (Überweisung noch offen)');
+
+  // Einnahme
+  await page.click('[data-entry-new="Einnahme"]');
+  await page.waitForSelector('#dlg-entry[open]');
+  assert.equal(await page.isVisible('#entry-cash'), false, 'Bar-vorgelegt nur bei Ausgaben');
+  await page.fill('#form-entry [name=bezeichnung]', 'Freiwillige Spende Test');
+  await page.fill('#form-entry [name=datum]', `${Y}-10-13`);
+  await page.fill('#form-entry [name=betrag]', '150');
+  await page.click('#btn-entry-save');
+  await waitSaved();
+  const after = await checkSums(Y);
+  assert.equal(after.sin, before.sin + 15000);
+  assert.equal(after.sout, before.sout + 1240);
+  ok('Einnahme „Freiwillige Spende“ 13.10. mit 150 € gespeichert; Summen und Ergebnis aktualisiert');
+
+  // offene Rückerstattung -> überwiesen
+  const newEntryId = (await fdb()).exec("SELECT id FROM buchungen WHERE bezeichnung='Druckerpapier Test'")[0].values[0][0];
+  const refundBtn = `[data-entry-refund="${newEntryId}"]`;
+  assert.ok(await page.isVisible(refundBtn));
+  await page.screenshot({ path: join(outDir, '12_finanzen.png') });
+  await page.click(refundBtn);
+  await confirmNo();
+  assert.ok(await page.isVisible(refundBtn));
+  await page.click(refundBtn);
+  await confirmYes();
+  await waitSaved();
+  const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+  assert.equal((await fdb()).exec(`SELECT erstattet_am FROM buchungen WHERE id=${newEntryId}`)[0].values[0][0], today);
+  assert.equal(await page.$(refundBtn), null);
+  assert.ok((await txt(`#fin-out-body tr[data-entry="${newEntryId}"]`)).includes('überwiesen am'));
+  ok('Bar vorgelegte Ausgabe als „auf Konto überwiesen“ markiert (Datum gespeichert, nachvollziehbar sichtbar)');
+
+  // Bearbeiten: Betrag ändern
+  await page.click(`[data-entry-edit="${newEntryId}"]`);
+  await page.waitForSelector('#dlg-entry[open]');
+  assert.equal(await page.inputValue('#form-entry [name=erstattet_am]'), today);
+  await page.fill('#form-entry [name=betrag]', '13,90');
+  await page.click('#btn-entry-save');
+  await waitSaved();
+  assert.equal((await fdb()).exec(`SELECT betrag_cent FROM buchungen WHERE id=${newEntryId}`)[0].values[0][0], 1390);
+  ok('Ausgabe bearbeitet (Betrag 13,90 €)');
+
+  // Export
+  await page.click('#btn-fin-export');
+  await page.waitForFunction(() => window.__lastSuggested?.startsWith('Einnahmen-Ausgaben') && window.__fs[window.__lastSuggested]);
+  writeFileSync(join(outDir, 'Einnahmen-Ausgaben.xlsx'), await getFile(`Einnahmen-Ausgaben_${Y}.xlsx`));
+  writeFileSync(join(outDir, 'finanz_erwartet.json'), JSON.stringify(await checkSums(Y)));
+  ok('Einnahmen-Ausgaben-Rechnung als Excel gespeichert');
+
+  // Jahr wechseln
+  await page.selectOption('#fin-year', String(Y - 1));
+  await checkSums(Y - 1);
+  assert.ok(!(await txt('#fin-out-body')).includes('Druckerpapier Test'));
+  ok(`Jahr ${Y - 1} auswählbar: nur Beiträge und Buchungen von ${Y - 1}`);
+  await page.selectOption('#fin-year', String(Y));
+
+  // Löschen
+  const spendeId = (await fdb()).exec("SELECT id FROM buchungen WHERE bezeichnung='Freiwillige Spende Test'")[0].values[0][0];
+  await page.click(`[data-entry-delete="${spendeId}"]`);
+  await confirmYes();
+  await waitSaved();
+  assert.equal((await fdb()).exec(`SELECT count(*) FROM buchungen WHERE id=${spendeId}`)[0].values[0][0], 0);
+  await checkSums(Y);
+  ok('Einnahme nach Rückfrage gelöscht, Summen neu berechnet');
+  await page.click('#dlg-finance .dialog-head [data-close]');
+}
+
 // Suche
 await page.fill('#search', 'ohlinger');
 await page.waitForFunction(() => { const r = [...document.querySelectorAll('#members-body tr')]; return r.length >= 1 && r.length < 10 && r.every((tr) => tr.textContent.includes('Öhlinger')); });
@@ -325,7 +436,7 @@ await page.waitForSelector('#app:not([hidden])');
 await waitSaved();
 await expectCount(0);
 const ndb = await dbOf('neu.db');
-assert.deepEqual(ndb.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0].values.flat(), ['beitraege', 'meta', 'mitglieder', 'sqlite_sequence']);
+assert.deepEqual(ndb.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")[0].values.flat(), ['beitraege', 'buchungen', 'meta', 'mitglieder', 'sqlite_sequence']);
 await page.screenshot({ path: join(outDir, '09_leere_datenbank.png') });
 ok('Neue leere Datenbank angelegt');
 
@@ -351,9 +462,10 @@ ok('Neue leere Datenbank angelegt');
   await expectCount(1);
   const mdb = await dbOf('alt.db');
   assert.deepEqual(mdb.exec(`SELECT bezahlt, betrag_cent FROM beitraege WHERE mitglied_id=1 AND jahr=${Y}`)[0].values[0], [1, null]);
-  assert.equal(mdb.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '2');
+  assert.equal(mdb.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '3');
+  assert.equal(mdb.exec("SELECT count(*) FROM sqlite_master WHERE name='buchungen'")[0].values[0][0], 1);
   assert.equal((await page.textContent(`.amount[data-id="1"][data-year="${Y}"]`)).trim(), 'Betrag?');
-  ok('Ältere Datenbank wird automatisch um die Betrags-Spalte ergänzt, vorhandene Beiträge bleiben erhalten');
+  ok('Ältere Datenbank wird automatisch ergänzt (Betrags-Spalte, Tabelle für Einnahmen/Ausgaben), vorhandene Daten bleiben erhalten');
 }
 
 // Datenschutz-Abschluss
@@ -396,8 +508,20 @@ age = [c for c in ws['H'] if c.value == 20][0]
 assert age.alignment.horizontal == 'center'
 v = openpyxl.load_workbook(d + '/Verstorbene.xlsx')['Verstorbene']
 assert [c.value for c in v[4]] == ['Nr.','Anrede','Vorname','Familienname','Geburtsdatum','Sterbedatum']
+import json
+exp = json.load(open(d + '/finanz_erwartet.json'))
+ear = openpyxl.load_workbook(d + '/Einnahmen-Ausgaben.xlsx')['EAR %d' % Y]
+erows = list(ear.iter_rows(min_row=5, values_only=True))
+assert [c.value for c in ear[4]] == ['Datum','Art','Bezeichnung','Anmerkung','Einnahmen','Ausgaben','Bar vorgelegt','Auf Konto überwiesen am']
+assert erows[0][2] == 'Mitgliedsbeiträge %d' % Y and abs(erows[0][4] - exp['fee'] / 100) < 0.001, erows[0]
+lab = {r[2]: r for r in erows}
+assert abs(lab['Summe Einnahmen'][4] - exp['sin'] / 100) < 0.001
+assert abs(lab['Summe Ausgaben'][5] - exp['sout'] / 100) < 0.001
+assert abs(lab['Einnahmen − Ausgaben'][4] - (exp['sin'] - exp['sout']) / 100) < 0.001
+assert lab['Druckerpapier Test'][6] == 'ja' and lab['Druckerpapier Test'][7] is not None
+assert lab['Druckerpapier'][7] == 'noch offen', lab['Druckerpapier']
 print(len(nrs))
 `;
 const n = execFileSync('python3', ['-c', py, outDir, String(Y)]).toString().trim();
-ok(`Excel-Dateien geprüft (12 Monatsblätter, Alter zentriert & markiert, ${n} Mitglieder nummeriert, Beträge mit Summenzeile)`);
+ok(`Excel-Dateien geprüft (12 Monatsblätter, Alter zentriert & markiert, ${n} Mitglieder nummeriert, Beträge mit Summenzeile, Einnahmen-Ausgaben-Rechnung mit Summen und Ergebnis)`);
 console.log(`\nAlle ${step} Prüfungen bestanden.`);

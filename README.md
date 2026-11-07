@@ -39,6 +39,7 @@ Jede Änderung wird **sofort automatisch** in die Datenbankdatei geschrieben. Ob
 | **Ehemalige** | Ausgetretene und verstorbene Mitglieder; Bearbeiten, wieder aufnehmen, löschen, Excel-Export. |
 | **Verstorbene** | Liste mit Anrede, Vorname, Familienname, Geburtsdatum, Sterbedatum; Excel-Export. |
 | **Geburtstage** | Geburtstage des aktuellen Jahres nach Monaten. Excel-Mappe mit 12 Blättern (Jänner–Dezember). Das Alter ist immer *aktuelles Jahr − Geburtsjahr* (wer am 6.7.2006 geboren ist, steht 2026 das ganze Jahr mit 20 in der Liste). Runde (10, 20, 30 …) und halbrunde (25, 35, 45 …) Geburtstage sind farbig markiert. Nur aktive Mitglieder. |
+| **Finanzen** | Einnahmen-Ausgaben-Rechnung mit Jahresauswahl. Oberste Zeile ist immer **Mitgliedsbeiträge** (Summe der bezahlten Beiträge des gewählten Jahres). Einzelne Einnahmen (z. B. Spenden) und Ausgaben (z. B. Druckerpapier) mit Datum, Bezeichnung, Betrag und Anmerkung erfassen, bearbeiten und löschen. Ausgaben können als **bar vorgelegt** gekennzeichnet werden; mit dem Datum der Überweisung auf das eigene Konto ist nachvollziehbar, ob die Rückerstattung schon erfolgt ist. Offene Rückerstattungen werden oben hervorgehoben. Summe Einnahmen, Summe Ausgaben und Einnahmen − Ausgaben; Excel-Export. |
 | **Excel-Export** | Liste aller aktiven Mitglieder inkl. Beitragsstatus und Beträgen als `.xlsx`, mit Summenzeile. |
 | **Sicherheitskopie** | Speichert eine Kopie der Datenbank an einem frei wählbaren Ort (z. B. USB-Stick). Oben wird das Datum der letzten Sicherung angezeigt; nach 30 Tagen ohne Sicherung wird es gelb markiert. |
 
@@ -72,5 +73,5 @@ node tests/e2e.mjs              # automatischer Browsertest (Playwright/Chromium
 | `src/style.css` | Design |
 | `src/app.js` | Programmlogik |
 | `src/xlsx.js` | Excel-Schreiber (ohne externe Bibliothek) |
-| `src/schema.sql` | Datenbankstruktur (Tabellen `mitglieder`, `beitraege` mit Betrag in Cent, `meta`). Ältere Datenbanken werden beim Öffnen automatisch ergänzt. |
+| `src/schema.sql` | Datenbankstruktur (Tabellen `mitglieder`, `beitraege` mit Betrag in Cent, `buchungen` für Einnahmen/Ausgaben, `meta`). Ältere Datenbanken werden beim Öffnen automatisch ergänzt. |
 | `vendor/sql.js-1.13.0/` | SQLite als WebAssembly (MIT-Lizenz) |

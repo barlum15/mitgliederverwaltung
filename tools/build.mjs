@@ -25,7 +25,7 @@ function inlineScript(code, label) {
 }
 
 let html = read('src/index.html');
-html = html.replace(/<!--ICON:([a-z]+)-->/g, (_, name) => {
+html = html.replace(/<!--ICON:([A-Za-z]+)-->/g, (_, name) => {
   if (!ICONS[name]) throw new Error('Unbekanntes Symbol: ' + name);
   return ICONS[name];
 });
@@ -45,6 +45,7 @@ html = html
   .replace('<!--SCRIPTS-->', () => scripts);
 
 // Sicherheitsprüfung: Die fertige Datei darf nichts aus dem Netz nachladen.
+if (/<!--ICON:/.test(html)) throw new Error('Nicht ersetzter Symbol-Platzhalter gefunden');
 const external = html.match(/\b(?:src|href)\s*=\s*["']?(?:https?:)?\/\//gi);
 if (external) throw new Error('Externe Verweise gefunden: ' + external.join(', '));
 if (!html.includes("connect-src 'none'")) throw new Error('Content-Security-Policy fehlt');

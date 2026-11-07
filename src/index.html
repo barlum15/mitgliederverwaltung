@@ -78,6 +78,7 @@
       <button class="btn btn-ghost" data-action="ehemalige" title="Ehemalige Mitglieder"><!--ICON:archive--> <span class="lbl">Ehemalige</span></button>
       <button class="btn btn-ghost" data-action="verstorbene" title="Verstorbene Mitglieder"><!--ICON:candle--> <span class="lbl">Verstorbene</span></button>
       <button class="btn btn-ghost" data-action="geburtstage" title="Geburtstage des aktuellen Jahres"><!--ICON:cake--> <span class="lbl">Geburtstage</span></button>
+      <button class="btn btn-ghost" data-action="finanzen" title="Einnahmen-Ausgaben-Rechnung"><!--ICON:wallet--> <span class="lbl">Finanzen</span></button>
       <button class="btn btn-ghost" data-action="export" title="Mitgliederliste als Excel speichern"><!--ICON:excel--> <span class="lbl">Excel-Export</span></button>
       <button class="btn btn-ghost" data-action="sicherung" title="Sicherheitskopie der Datenbank erstellen"><!--ICON:save--> <span class="lbl">Sicherheitskopie</span></button>
       <button class="btn btn-ghost" data-action="wechseln" title="Andere Datenbank öffnen"><!--ICON:switch--></button>
@@ -259,6 +260,105 @@
     <button type="button" class="btn btn-light" data-close>Schließen</button>
     <button type="button" class="btn btn-primary" id="btn-list-export"><!--ICON:excel--> Als Excel speichern</button>
   </footer>
+</dialog>
+
+<!-- ============ Dialog: Einnahmen-Ausgaben-Rechnung ============ -->
+<dialog id="dlg-finance" class="dialog dialog-xl">
+  <header class="dialog-head">
+    <h2>Einnahmen-Ausgaben-Rechnung</h2>
+    <label class="year-select">Jahr
+      <select id="fin-year" aria-label="Jahr auswählen"></select>
+    </label>
+    <span class="spacer"></span>
+    <button type="button" class="icon-btn" data-close aria-label="Schließen"><!--ICON:x--></button>
+  </header>
+  <div class="dialog-body">
+    <div class="fin-cards">
+      <div class="fin-card fin-in"><div class="fin-label"><!--ICON:arrowDown--> Summe Einnahmen</div><div class="fin-value" id="fin-sum-in"></div></div>
+      <div class="fin-card fin-out"><div class="fin-label"><!--ICON:arrowUp--> Summe Ausgaben</div><div class="fin-value" id="fin-sum-out"></div></div>
+      <div class="fin-card fin-result" id="fin-result-card"><div class="fin-label">Einnahmen − Ausgaben</div><div class="fin-value" id="fin-result"></div></div>
+    </div>
+    <div id="fin-open" class="alert alert-warn" hidden></div>
+
+    <section class="fin-section">
+      <div class="fin-section-head">
+        <h3>Einnahmen</h3>
+        <button type="button" class="btn btn-light btn-sm" data-entry-new="Einnahme"><!--ICON:plus--> Einnahme hinzufügen</button>
+      </div>
+      <div class="table-wrap fin-table">
+        <table class="grid">
+          <thead><tr><th>Datum</th><th>Bezeichnung</th><th>Anmerkung</th><th class="money">Betrag</th><th class="col-actions"></th></tr></thead>
+          <tbody id="fin-in-body"></tbody>
+          <tfoot><tr class="sum-row"><td></td><td>Summe Einnahmen</td><td></td><td class="money" id="fin-in-total"></td><td></td></tr></tfoot>
+        </table>
+      </div>
+    </section>
+
+    <section class="fin-section">
+      <div class="fin-section-head">
+        <h3>Ausgaben</h3>
+        <button type="button" class="btn btn-light btn-sm" data-entry-new="Ausgabe"><!--ICON:plus--> Ausgabe hinzufügen</button>
+      </div>
+      <div class="table-wrap fin-table">
+        <table class="grid">
+          <thead><tr><th>Datum</th><th>Bezeichnung</th><th>Anmerkung</th><th>Bar vorgelegt / Rückerstattung</th><th class="money">Betrag</th><th class="col-actions"></th></tr></thead>
+          <tbody id="fin-out-body"></tbody>
+          <tfoot><tr class="sum-row"><td></td><td>Summe Ausgaben</td><td></td><td></td><td class="money" id="fin-out-total"></td><td></td></tr></tfoot>
+        </table>
+        <div id="fin-out-empty" class="empty empty-sm" hidden>Für dieses Jahr sind noch keine Ausgaben eingetragen.</div>
+      </div>
+    </section>
+  </div>
+  <footer class="dialog-foot">
+    <span class="muted small">Mitgliedsbeiträge = Summe der bezahlten Beiträge, die für das gewählte Jahr eingetragen sind (inkl. ehemaliger Mitglieder).</span>
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-light" data-close>Schließen</button>
+    <button type="button" class="btn btn-primary" id="btn-fin-export"><!--ICON:excel--> Als Excel speichern</button>
+  </footer>
+</dialog>
+
+<!-- ============ Dialog: Einnahme / Ausgabe erfassen ============ -->
+<dialog id="dlg-entry" class="dialog">
+  <form id="form-entry" novalidate>
+    <header class="dialog-head">
+      <h2 id="entry-title">Ausgabe hinzufügen</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Schließen"><!--ICON:x--></button>
+    </header>
+    <div class="dialog-body">
+      <div id="entry-errors" class="alert alert-danger" hidden></div>
+      <div class="segmented" role="radiogroup" aria-label="Art">
+        <label><input type="radio" name="art" value="Einnahme"> <span><!--ICON:arrowDown--> Einnahme</span></label>
+        <label><input type="radio" name="art" value="Ausgabe"> <span><!--ICON:arrowUp--> Ausgabe</span></label>
+      </div>
+      <div class="form-grid">
+        <label class="f f-12">Bezeichnung *
+          <input name="bezeichnung" autocomplete="off" placeholder="z. B. Druckerpapier, Freiwillige Spende">
+        </label>
+        <label class="f f-6">Datum *
+          <input name="datum" type="date" min="1900-01-01">
+        </label>
+        <label class="f f-6">Betrag *
+          <span class="money-input"><input name="betrag" inputmode="decimal" autocomplete="off" placeholder="0,00"><span>€</span></span>
+        </label>
+        <label class="f f-12">Anmerkung
+          <input name="anmerkung" autocomplete="off" placeholder="z. B. Rechnungsnummer, Geschäft">
+        </label>
+      </div>
+      <div id="entry-cash" class="cash-box">
+        <label class="check-row"><input type="checkbox" name="bar_vorgelegt" class="fee"> Bar vorgelegt (aus eigener Tasche bezahlt)</label>
+        <label class="f" id="entry-refund">Auf mein Konto überwiesen am
+          <input name="erstattet_am" type="date" min="1900-01-01">
+          <span class="muted small">Leer lassen, solange die Überweisung noch nicht stattgefunden hat.</span>
+        </label>
+      </div>
+    </div>
+    <footer class="dialog-foot">
+      <button type="button" class="btn btn-danger-ghost" id="btn-entry-delete" hidden><!--ICON:trash--> Löschen</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-light" data-close>Abbrechen</button>
+      <button type="submit" class="btn btn-primary" id="btn-entry-save">Speichern</button>
+    </footer>
+  </form>
 </dialog>
 
 <!-- ============ Dialog: Mitgliedsbeitrag ============ -->

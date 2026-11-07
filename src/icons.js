@@ -21,6 +21,9 @@
     edit: p('<path d="M4 20h4.5L19.3 9.2a2.1 2.1 0 0 0-3-3L5.5 17v3z"/><path d="M14.5 8l2.9 2.9"/>'),
     undo: p('<path d="M9 7L4.5 11.5 9 16"/><path d="M4.5 11.5H15a5 5 0 0 1 0 10h-2"/>'),
     alert: p('<path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 10v4.5M12 17.5v.1"/>'),
-    loader: p('<path d="M12 3a9 9 0 1 0 9 9"/>')
+    loader: p('<path d="M12 3a9 9 0 1 0 9 9"/>'),
+    wallet: p('<path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><rect x="3.5" y="8" width="17" height="11.5" rx="2.5"/><path d="M16 13.8h.1"/>'),
+    arrowUp: p('<path d="M12 19V5M6 11l6-6 6 6"/>'),
+    arrowDown: p('<path d="M12 5v14M6 13l6 6 6-6"/>')
   };
 })(typeof window !== 'undefined' ? window : globalThis);

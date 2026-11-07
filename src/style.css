@@ -335,6 +335,48 @@ tr.bday-half .badge-age { background: #f59e0b; color: #fff; }
 .toast-ok .ico { color: #34d399; }
 .toast-err { background: var(--danger); }
 
+/* ===== Einnahmen-Ausgaben-Rechnung ===== */
+.year-select { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--primary-600); margin-left: 12px; }
+.year-select select {
+  font: inherit; font-size: 16px; font-weight: 800; color: var(--primary-600); background: #fff;
+  border: 1px solid var(--primary-100); border-radius: 9px; padding: 5px 10px; cursor: pointer;
+}
+.fin-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
+.fin-card { border-radius: 14px; padding: 12px 18px; border: 1px solid var(--line); background: #fff; }
+.fin-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.fin-label .ico { width: 16px; height: 16px; }
+.fin-value { font-size: 26px; font-weight: 800; letter-spacing: -.5px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.fin-in { background: linear-gradient(135deg, #ecfdf5, #fff); border-color: #a7f3d0; }
+.fin-in .fin-value, .fin-in .fin-label .ico { color: var(--success); }
+.fin-out { background: linear-gradient(135deg, #fff1f2, #fff); border-color: #fecdd3; }
+.fin-out .fin-value, .fin-out .fin-label .ico { color: #e11d48; }
+.fin-result { background: linear-gradient(135deg, #0891b2, #0e7490 60%, #155e75); border: 0; color: #fff; }
+.fin-result .fin-label { color: rgba(255, 255, 255, .85); }
+.fin-result.negative { background: linear-gradient(135deg, #f43f5e, #be123c); }
+.alert-warn { background: var(--accent-soft); color: #92400e; border: 1px solid #fcd34d; }
+.fin-section { margin-top: 16px; }
+.fin-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.fin-section-head h3 { margin: 0; font-size: 15px; text-transform: uppercase; letter-spacing: .6px; color: var(--primary); }
+.fin-table { border: 1px solid var(--line); border-radius: 12px; }
+.grid .money { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+.grid tr.fixed-row td { background: var(--primary-50) !important; font-weight: 700; }
+.grid tfoot td { font-weight: 800; background: #f1f5f9; border-top: 2px solid var(--line-strong); border-bottom: 0; }
+.grid td.wrap-cell { white-space: normal; min-width: 160px; }
+.empty-sm { padding: 18px; font-size: 14px; }
+.badge-warn { background: var(--accent-soft); color: #92400e; border: 1px solid #fcd34d; }
+.badge-ok { background: var(--success-soft); color: #065f46; }
+.refund { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.segmented { display: inline-flex; background: var(--row-alt); border: 1px solid var(--line); border-radius: 12px; padding: 4px; gap: 4px; margin-bottom: 16px; }
+.segmented input { position: absolute; opacity: 0; pointer-events: none; }
+.segmented span { display: inline-flex; align-items: center; gap: 6px; padding: 7px 16px; border-radius: 9px; font-weight: 700; cursor: pointer; color: var(--muted); }
+.segmented input:checked + span { background: #fff; color: var(--text); box-shadow: var(--shadow); }
+.segmented input[value="Einnahme"]:checked + span .ico { color: var(--success); }
+.segmented input[value="Ausgabe"]:checked + span .ico { color: #e11d48; }
+.segmented input:focus-visible + span { outline: 3px solid rgba(14, 116, 144, .35); }
+.cash-box { margin-top: 16px; padding: 14px; border-radius: 12px; background: var(--accent-soft); border: 1px solid #fcd34d; }
+.cash-box .check-row { margin-bottom: 0; }
+.cash-box .f { margin-top: 12px; }
+
 /* ===== Wenig Platz (z. B. beim Hineinzoomen mit Strg + Mausrad) =====
    Kopfzeile und Kennzahlen werden kompakter, damit die Tabelle samt Scrollbalken sichtbar bleibt. */
 @media (max-width: 1250px) {
@@ -367,4 +409,5 @@ tr.bday-half .badge-age { background: #f59e0b; color: #fff; }
   .search { width: 100%; }
   .form-grid { grid-template-columns: 1fr; }
   .f-2, .f-3, .f-4, .f-6, .f-12 { grid-column: span 1; }
+  .fin-cards { grid-template-columns: 1fr; }
 }

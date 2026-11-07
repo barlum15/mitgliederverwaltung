@@ -39,3 +39,20 @@ CREATE TABLE IF NOT EXISTS beitraege (
 );
 
 CREATE INDEX IF NOT EXISTS idx_mitglieder_aktiv ON mitglieder (austrittsgrund);
+
+-- Einnahmen-Ausgaben-Rechnung: einzelne Einnahmen und Ausgaben
+-- (die Mitgliedsbeiträge werden nicht hier, sondern aus der Tabelle beitraege summiert)
+CREATE TABLE IF NOT EXISTS buchungen (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  art            TEXT NOT NULL CHECK (art IN ('Einnahme', 'Ausgabe')),
+  datum          TEXT NOT NULL,            -- JJJJ-MM-TT; bestimmt das Jahr der Buchung
+  bezeichnung    TEXT NOT NULL,
+  betrag_cent    INTEGER NOT NULL CHECK (betrag_cent > 0),
+  anmerkung      TEXT,
+  bar_vorgelegt  INTEGER NOT NULL DEFAULT 0 CHECK (bar_vorgelegt IN (0, 1)), -- nur Ausgaben: privat bar vorgelegt
+  erstattet_am   TEXT,                     -- Datum der Überweisung auf das eigene Konto; NULL = noch offen
+  erstellt_am    TEXT,
+  geaendert_am   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_buchungen_datum ON buchungen (datum);

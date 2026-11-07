@@ -67,7 +67,7 @@ export async function buildTestDb() {
   const db = new SQL.Database();
   db.exec(readFileSync(join(root, 'src/schema.sql'), 'utf8'));
   const now = `${Y}-01-01 12:00:00`;
-  db.run("INSERT INTO meta(key, value) VALUES ('schema_version', '1'), ('erstellt_am', ?), ('testdaten', 'ja')", [now]);
+  db.run("INSERT INTO meta(key, value) VALUES ('schema_version', '3'), ('erstellt_am', ?), ('testdaten', 'ja')", [now]);
 
   const members = [...fixed.map((m) => {
     const [plz, stadt] = pick(ORTE);
@@ -109,6 +109,24 @@ export async function buildTestDb() {
     }
   });
   ins.free();
+
+  // Einnahmen und Ausgaben (Einnahmen-Ausgaben-Rechnung); Daten liegen nicht in der Zukunft
+  const today = new Date().toISOString().slice(0, 10);
+  const past = (iso) => (iso <= today ? iso : today);
+  const buchung = db.prepare(`INSERT INTO buchungen (art, datum, bezeichnung, betrag_cent, anmerkung, bar_vorgelegt, erstattet_am,
+    erstellt_am, geaendert_am) VALUES (?,?,?,?,?,?,?,?,?)`);
+  [
+    ['Einnahme', `${Y - 1}-06-20`, 'Sommerfest – Getränkeverkauf', 48600, null, 0, null],
+    ['Einnahme', `${Y - 1}-12-02`, 'Freiwillige Spende', 10000, 'Spende anonym', 0, null],
+    ['Ausgabe', `${Y - 1}-06-10`, 'Getränke Sommerfest', 31250, 'Getränkemarkt, Rechnung 2231', 1, `${Y - 1}-06-14`],
+    ['Ausgabe', `${Y - 1}-11-03`, 'Kontoführungsgebühr', 4800, null, 0, null],
+    ['Einnahme', past(`${Y}-03-15`), 'Freiwillige Spende', 5000, null, 0, null],
+    ['Einnahme', past(`${Y}-06-21`), 'Sommerfest – Getränkeverkauf', 52300, null, 0, null],
+    ['Ausgabe', past(`${Y}-02-08`), 'Porto Einladungen', 2340, null, 1, past(`${Y}-02-10`)],
+    ['Ausgabe', past(`${Y}-06-12`), 'Getränke Sommerfest', 29870, 'Rechnung 4711', 0, null],
+    ['Ausgabe', past(`${Y}-09-30`), 'Druckerpapier', 1240, 'Bürofachhandel', 1, null]
+  ].forEach((b) => buchung.run([...b, now, now]));
+  buchung.free();
   fee.free();
   const bytes = db.export();
   db.close();

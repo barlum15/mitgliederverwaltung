@@ -26,6 +26,8 @@
     members: [],
     fees: new Map(),       // mitglied_id -> Map(jahr -> { paid: 0/1, cents: Zahl oder null })
     feeEdit: null,         // gerade im Beitragsdialog bearbeiteter Beitrag
+    finYear: null,         // in der Einnahmen-Ausgaben-Rechnung gewähltes Jahr
+    entryEdit: null,       // gerade bearbeitete Einnahme/Ausgabe (oder null bei "neu")
     search: '',
     saveChain: Promise.resolve(true),
     pendingSaves: 0,
@@ -87,10 +89,11 @@
   const isActive = (m) => !m.austrittsgrund;
 
   // ----- Geldbeträge (intern in Cent, damit keine Rundungsfehler entstehen) -----
-  const euroFmt = new Intl.NumberFormat('de-AT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Format 1.234,50 € (Tausenderpunkt, Dezimalkomma)
+  const euroFmt = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   function fmtEuro(cents, { short = false } = {}) {
     if (cents === null || cents === undefined) return '';
-    if (short && cents % 100 === 0) return new Intl.NumberFormat('de-AT').format(cents / 100) + ' €';
+    if (short && cents % 100 === 0) return new Intl.NumberFormat('de-DE').format(cents / 100) + ' €';
     return euroFmt.format(cents / 100) + ' €';
   }
   // Eingabe wie "30", "30,5", "30,50 €", "1.234,50" oder "1234.50" -> Cent; '' -> null; ungültig -> NaN
@@ -226,6 +229,9 @@
       db.exec('ALTER TABLE beitraege ADD COLUMN betrag_cent INTEGER CHECK (betrag_cent IS NULL OR betrag_cent >= 0)');
       changed = true;
     }
+    // Version 3: Tabelle buchungen wird über SCHEMA_SQL (CREATE TABLE IF NOT EXISTS) angelegt
+    const v = db.exec("SELECT value FROM meta WHERE key = 'schema_version'");
+    if (!v.length || v[0].values[0][0] !== '3') changed = true;
     return changed;
   }
 
@@ -298,7 +304,7 @@
     state.db = db;
     state.handle = handle;
     const isNew = !bytes.length;
-    if (getMeta('schema_version') !== '2') setMeta('schema_version', '2');
+    if (getMeta('schema_version') !== '3') setMeta('schema_version', '3');
     if (!getMeta('erstellt_am')) setMeta('erstellt_am', nowStamp());
     if (isNew || migrated) await persist();
     await kv('put', 'lastHandle', handle);
@@ -903,6 +909,233 @@
     if (h) toast('Excel-Datei gespeichert: ' + h.name);
   }
 
+  // ================= Einnahmen-Ausgaben-Rechnung =================
+  // Mitgliedsbeiträge eines Jahres: alle als bezahlt markierten Beiträge dieses Jahres (auch ehemaliger Mitglieder)
+  function feeIncome(year) {
+    const r = all(`SELECT COUNT(*) AS n, COALESCE(SUM(betrag_cent), 0) AS cents, COALESCE(SUM(betrag_cent IS NULL), 0) AS missing
+                   FROM beitraege WHERE jahr = ? AND bezahlt = 1`, [year])[0];
+    return { count: r.n, cents: r.cents, missing: r.missing };
+  }
+  function entriesOf(year) {
+    return all(`SELECT * FROM buchungen WHERE substr(datum, 1, 4) = ? ORDER BY datum, id`, [String(year)]);
+  }
+  function openRefunds() {
+    return all("SELECT * FROM buchungen WHERE art = 'Ausgabe' AND bar_vorgelegt = 1 AND erstattet_am IS NULL ORDER BY datum, id");
+  }
+  function financeYears() {
+    const y = currentYear();
+    const years = new Set([y - 1, y, y + 1]);
+    all("SELECT DISTINCT CAST(substr(datum, 1, 4) AS INTEGER) AS j FROM buchungen").forEach((r) => years.add(r.j));
+    all('SELECT DISTINCT jahr AS j FROM beitraege WHERE bezahlt = 1').forEach((r) => years.add(r.j));
+    return [...years].filter((j) => j > 1900 && j < 3000).sort((a, b) => b - a);
+  }
+  // Berechnet alle Zahlen eines Jahres (auch für den Export)
+  function financeData(year) {
+    const fees = feeIncome(year);
+    const entries = entriesOf(year);
+    const incomes = entries.filter((e) => e.art === 'Einnahme');
+    const expenses = entries.filter((e) => e.art === 'Ausgabe');
+    const sumIn = fees.cents + incomes.reduce((s, e) => s + e.betrag_cent, 0);
+    const sumOut = expenses.reduce((s, e) => s + e.betrag_cent, 0);
+    return { year, fees, incomes, expenses, sumIn, sumOut, result: sumIn - sumOut };
+  }
+
+  function openFinance(year) {
+    state.finYear = year || state.finYear || currentYear();
+    renderFinance();
+    if (!$('#dlg-finance').open) $('#dlg-finance').showModal();
+  }
+
+  function refundLabel(e) {
+    if (!e.bar_vorgelegt) return '';
+    return e.erstattet_am
+      ? `<span class="badge badge-ok">${I.check} überwiesen am ${fmtDate(e.erstattet_am)}</span>`
+      : `<span class="refund"><span class="badge badge-warn">bar vorgelegt – noch nicht überwiesen</span>
+           <button type="button" class="btn btn-light btn-sm" data-entry-refund="${e.id}">${I.check} Als überwiesen markieren</button></span>`;
+  }
+
+  function renderFinance() {
+    const year = state.finYear;
+    const sel = $('#fin-year');
+    sel.innerHTML = financeYears().map((y) => `<option value="${y}"${y === year ? ' selected' : ''}>${y}</option>`).join('');
+    const d = financeData(year);
+    const actions = (e) => `<td class="col-actions">
+        <button class="icon-btn primary" data-entry-edit="${e.id}" title="Bearbeiten" aria-label="Bearbeiten">${I.edit}</button>
+        <button class="icon-btn danger" data-entry-delete="${e.id}" title="Löschen" aria-label="Löschen">${I.trash}</button></td>`;
+
+    const feeNote = `${d.fees.count} bezahlte Beiträge` +
+      (d.fees.missing ? ` · <strong>${d.fees.missing} ohne Betrag</strong> (bitte in der Mitgliederliste nachtragen)` : '');
+    $('#fin-in-body').innerHTML =
+      `<tr class="fixed-row"><td></td><td>Mitgliedsbeiträge ${year}</td><td class="wrap-cell">${feeNote}</td>
+         <td class="money">${fmtEuro(d.fees.cents)}</td><td class="col-actions"></td></tr>` +
+      d.incomes.map((e) => `<tr data-entry="${e.id}">
+        <td>${fmtDate(e.datum)}</td><td class="name">${esc(e.bezeichnung)}</td><td class="wrap-cell muted">${esc(e.anmerkung)}</td>
+        <td class="money">${fmtEuro(e.betrag_cent)}</td>${actions(e)}</tr>`).join('');
+    $('#fin-out-body').innerHTML = d.expenses.map((e) => `<tr data-entry="${e.id}">
+        <td>${fmtDate(e.datum)}</td><td class="name">${esc(e.bezeichnung)}</td><td class="wrap-cell muted">${esc(e.anmerkung)}</td>
+        <td>${refundLabel(e)}</td><td class="money">${fmtEuro(e.betrag_cent)}</td>${actions(e)}</tr>`).join('');
+    $('#fin-out-empty').hidden = d.expenses.length > 0;
+
+    $('#fin-in-total').textContent = fmtEuro(d.sumIn);
+    $('#fin-out-total').textContent = fmtEuro(d.sumOut);
+    $('#fin-sum-in').textContent = fmtEuro(d.sumIn);
+    $('#fin-sum-out').textContent = fmtEuro(d.sumOut);
+    $('#fin-result').textContent = (d.result < 0 ? '− ' : '') + fmtEuro(Math.abs(d.result));
+    $('#fin-result-card').classList.toggle('negative', d.result < 0);
+
+    // Hinweis auf offene Rückerstattungen (alle Jahre)
+    const open = openRefunds();
+    const box = $('#fin-open');
+    box.hidden = !open.length;
+    if (open.length) {
+      const total = open.reduce((s, e) => s + e.betrag_cent, 0);
+      box.innerHTML = `<strong>Noch nicht auf Ihr Konto überwiesen:</strong> ${open.length} bar vorgelegte Ausgabe${open.length > 1 ? 'n' : ''} ` +
+        `über insgesamt <strong>${fmtEuro(total)}</strong> – ` +
+        open.map((e) => `${esc(e.bezeichnung)} (${fmtDate(e.datum)}, ${fmtEuro(e.betrag_cent)})`).join(', ');
+    }
+  }
+
+  // ----- Einnahme / Ausgabe erfassen -----
+  function openEntry(entry, art) {
+    state.entryEdit = entry || null;
+    const form = $('#form-entry');
+    form.reset();
+    $$('.invalid', form).forEach((el) => el.classList.remove('invalid'));
+    $('#entry-errors').hidden = true;
+    const a = entry ? entry.art : art;
+    form.querySelector(`[name=art][value="${a}"]`).checked = true;
+    form.elements.bezeichnung.value = entry?.bezeichnung || '';
+    // neues Datum: heute, wenn das gewählte Jahr das aktuelle ist, sonst der 1. Jänner des gewählten Jahres
+    form.elements.datum.value = entry?.datum || (state.finYear === currentYear() ? todayISO() : `${state.finYear}-01-01`);
+    form.elements.betrag.value = entry ? euroFmt.format(entry.betrag_cent / 100) : '';
+    form.elements.anmerkung.value = entry?.anmerkung || '';
+    form.elements.bar_vorgelegt.checked = !!entry?.bar_vorgelegt;
+    form.elements.erstattet_am.value = entry?.erstattet_am || '';
+    $('#btn-entry-delete').hidden = !entry;
+    updateEntryForm();
+    $('#dlg-entry').showModal();
+    form.elements.bezeichnung.focus();
+  }
+  function entryArt() { return $('#form-entry').querySelector('[name=art]:checked').value; }
+  function updateEntryForm() {
+    const form = $('#form-entry');
+    const art = entryArt();
+    $('#entry-title').textContent = (state.entryEdit ? `${art} bearbeiten` : `${art} hinzufügen`);
+    $('#entry-cash').hidden = art !== 'Ausgabe';
+    $('#entry-refund').hidden = !form.elements.bar_vorgelegt.checked;
+  }
+
+  async function onEntrySubmit(e) {
+    e.preventDefault();
+    const form = $('#form-entry');
+    const el = form.elements;
+    const art = entryArt();
+    const data = {
+      art,
+      bezeichnung: clean(el.bezeichnung.value),
+      datum: clean(el.datum.value),
+      betrag_cent: parseEuro(el.betrag.value),
+      anmerkung: clean(el.anmerkung.value),
+      bar_vorgelegt: art === 'Ausgabe' && el.bar_vorgelegt.checked ? 1 : 0,
+      erstattet_am: null
+    };
+    if (data.bar_vorgelegt) data.erstattet_am = clean(el.erstattet_am.value);
+
+    const errors = [];
+    const bad = [];
+    if (!data.bezeichnung) { errors.push('Bitte eine Bezeichnung eingeben.'); bad.push('bezeichnung'); }
+    if (!isValidISO(data.datum)) { errors.push('Bitte ein gültiges Datum eingeben.'); bad.push('datum'); }
+    if (data.betrag_cent === null || Number.isNaN(data.betrag_cent) || data.betrag_cent <= 0) {
+      errors.push('Bitte einen gültigen Betrag größer als 0 eingeben, z. B. 12,40.'); bad.push('betrag');
+    }
+    if (data.erstattet_am && !isValidISO(data.erstattet_am)) { errors.push('Überweisungsdatum: ungültiges Datum.'); bad.push('erstattet_am'); }
+    else if (data.erstattet_am && isValidISO(data.datum) && data.erstattet_am < data.datum) {
+      errors.push('Die Überweisung kann nicht vor dem Datum der Ausgabe liegen.'); bad.push('erstattet_am');
+    }
+    $$('.invalid', form).forEach((x) => x.classList.remove('invalid'));
+    if (errors.length) {
+      $('#entry-errors').innerHTML = '<strong>Bitte prüfen:</strong><ul>' + errors.map((x) => `<li>${esc(x)}</li>`).join('') + '</ul>';
+      $('#entry-errors').hidden = false;
+      bad.forEach((f) => el[f].classList.add('invalid'));
+      el[bad[0]].focus();
+      return;
+    }
+
+    const params = [data.art, data.datum, data.bezeichnung, data.betrag_cent, data.anmerkung, data.bar_vorgelegt, data.erstattet_am, nowStamp()];
+    if (state.entryEdit) {
+      run(`UPDATE buchungen SET art=?, datum=?, bezeichnung=?, betrag_cent=?, anmerkung=?, bar_vorgelegt=?, erstattet_am=?, geaendert_am=?
+           WHERE id=?`, [...params, state.entryEdit.id]);
+    } else {
+      run(`INSERT INTO buchungen (art, datum, bezeichnung, betrag_cent, anmerkung, bar_vorgelegt, erstattet_am, geaendert_am, erstellt_am)
+           VALUES (?,?,?,?,?,?,?,?,?)`, [...params, nowStamp()]);
+    }
+    const year = Number(data.datum.slice(0, 4));
+    $('#dlg-entry').close();
+    toast(`${data.art} „${data.bezeichnung}“ (${fmtEuro(data.betrag_cent)}) gespeichert` + (year !== state.finYear ? ` – im Jahr ${year}` : '') + '.');
+    openFinance(year);
+    persist();
+  }
+
+  async function deleteEntry(entry) {
+    const ok = await confirmDialog({
+      title: `${entry.art} löschen?`,
+      html: `<strong>${esc(entry.bezeichnung)}</strong> vom ${fmtDate(entry.datum)} über <strong>${fmtEuro(entry.betrag_cent)}</strong> wird endgültig gelöscht.`,
+      ok: 'Endgültig löschen',
+      danger: true
+    });
+    if (!ok) return false;
+    run('DELETE FROM buchungen WHERE id = ?', [entry.id]);
+    toast(`„${entry.bezeichnung}“ wurde gelöscht.`);
+    renderFinance();
+    persist();
+    return true;
+  }
+
+  async function markRefunded(entry) {
+    if (entry.datum > todayISO()) {
+      toast('Die Ausgabe ist mit einem Datum in der Zukunft eingetragen. Bitte das Überweisungsdatum über „Bearbeiten“ eintragen.', 'err', 7000);
+      return;
+    }
+    const ok = await confirmDialog({
+      title: 'Als überwiesen markieren?',
+      html: `Die bar vorgelegte Ausgabe <strong>${esc(entry.bezeichnung)}</strong> (${fmtEuro(entry.betrag_cent)}) wurde ` +
+        `<strong>heute (${fmtDate(todayISO())})</strong> auf Ihr Konto überwiesen?<br><br>` +
+        'Ein anderes Datum können Sie über „Bearbeiten“ eintragen.',
+      ok: 'Ja, überwiesen'
+    });
+    if (!ok) return;
+    run('UPDATE buchungen SET erstattet_am = ?, geaendert_am = ? WHERE id = ?', [todayISO(), nowStamp(), entry.id]);
+    toast(`„${entry.bezeichnung}“ als überwiesen markiert.`);
+    renderFinance();
+    persist();
+  }
+
+  function exportFinance() {
+    const d = financeData(state.finYear);
+    const rows = [
+      { cells: [null, 'Einnahme', `Mitgliedsbeiträge ${d.year}`, `${d.fees.count} bezahlte Beiträge` + (d.fees.missing ? `, davon ${d.fees.missing} ohne Betrag` : ''),
+        d.fees.cents / 100, null, null, null] },
+      ...d.incomes.map((e) => ({ cells: [e.datum, 'Einnahme', e.bezeichnung, e.anmerkung, e.betrag_cent / 100, null, null, null] })),
+      ...d.expenses.map((e) => ({ cells: [e.datum, 'Ausgabe', e.bezeichnung, e.anmerkung, null, e.betrag_cent / 100,
+        e.bar_vorgelegt ? 'ja' : null, e.bar_vorgelegt ? (e.erstattet_am || 'noch offen') : null] }))
+    ];
+    const open = d.expenses.filter((e) => e.bar_vorgelegt && !e.erstattet_am);
+    return saveExport([{
+      name: `EAR ${d.year}`,
+      title: `Einnahmen-Ausgaben-Rechnung ${d.year}`,
+      subtitle: `Stand: ${fmtDate(todayISO())}` +
+        (open.length ? ` · ${open.length} bar vorgelegte Ausgabe(n) noch nicht überwiesen (${fmtEuro(open.reduce((s, e) => s + e.betrag_cent, 0))})` : ''),
+      columns: [C('Datum', 12, 'date'), C('Art', 10), C('Bezeichnung', 30), C('Anmerkung', 34), C('Einnahmen', 14, 'money'),
+        C('Ausgaben', 14, 'money'), C('Bar vorgelegt', 11), C('Auf Konto überwiesen am', 16, 'date')],
+      rows,
+      totals: [
+        { cells: [null, null, 'Summe Einnahmen', null, d.sumIn / 100, null, null, null] },
+        { cells: [null, null, 'Summe Ausgaben', null, null, d.sumOut / 100, null, null] },
+        { cells: [null, null, 'Einnahmen − Ausgaben', null, d.result / 100, null, null, null] }
+      ]
+    }], `Einnahmen-Ausgaben_${d.year}.xlsx`);
+  }
+
   // ================= Sicherheitskopie =================
   async function backup() {
     await state.saveChain; // erst alle offenen Änderungen in die Hauptdatei schreiben
@@ -944,6 +1177,7 @@
         verstorbene: () => openList('verstorbene'),
         geburtstage: () => openList('geburtstage'),
         export: exportMembers,
+        finanzen: () => openFinance(),
         sicherung: backup,
         wechseln: switchDb
       })[action]?.();
@@ -979,6 +1213,30 @@
     $('#form-fee').addEventListener('submit', onFeeSubmit);
     $('#form-fee').elements.paid.addEventListener('change', updateFeeForm);
     $('#form-fee').elements.betrag.addEventListener('input', (e) => { e.target.classList.remove('invalid'); $('#fee-error').hidden = true; });
+    // Finanzen
+    $('#fin-year').addEventListener('change', (e) => { state.finYear = Number(e.target.value); renderFinance(); });
+    $('#btn-fin-export').addEventListener('click', exportFinance);
+    $('#dlg-finance').addEventListener('click', (e) => {
+      const findEntry = (id) => all('SELECT * FROM buchungen WHERE id = ?', [Number(id)])[0];
+      const t = e.target.closest('[data-entry-new], [data-entry-edit], [data-entry-delete], [data-entry-refund]');
+      if (!t) return;
+      if (t.dataset.entryNew) openEntry(null, t.dataset.entryNew);
+      else if (t.dataset.entryEdit) openEntry(findEntry(t.dataset.entryEdit));
+      else if (t.dataset.entryDelete) deleteEntry(findEntry(t.dataset.entryDelete));
+      else if (t.dataset.entryRefund) markRefunded(findEntry(t.dataset.entryRefund));
+    });
+    // Rote Markierung eines Feldes verschwindet, sobald es korrigiert wird
+    for (const f of ['#form-entry', '#form-member']) {
+      $(f).addEventListener('input', (e) => e.target.classList?.remove('invalid'));
+      $(f).addEventListener('change', (e) => e.target.classList?.remove('invalid'));
+    }
+    const entryForm = $('#form-entry');
+    entryForm.addEventListener('submit', onEntrySubmit);
+    entryForm.addEventListener('change', (e) => { if (['art', 'bar_vorgelegt'].includes(e.target.name)) updateEntryForm(); });
+    $('#btn-entry-delete').addEventListener('click', async () => {
+      if (state.entryEdit && (await deleteEntry(state.entryEdit))) $('#dlg-entry').close();
+    });
+
     $('#btn-member-delete').addEventListener('click', async () => {
       if (state.editing && (await deleteMember(state.editing))) $('#dlg-member').close();
     });
